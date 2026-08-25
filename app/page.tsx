@@ -23,7 +23,7 @@ export default function Home() {
         <SymbolSearch autoFocus />
         <p className="mt-3 text-[13px]">
           <Link href="/screener" className="underline underline-offset-2" style={{ color: 'var(--accent)' }}>
-            Or browse the whole S&amp;P 500, ranked
+            Or browse the whole universe, ranked
           </Link>
         </p>
         <div className="mt-3 flex items-center gap-2 flex-wrap text-[13px]">

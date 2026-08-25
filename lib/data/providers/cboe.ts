@@ -25,7 +25,7 @@
  *     with CBOE before showing their quotes to a paying user.
  */
 
-import { RateLimiter, withRetry } from '../pool'
+import { RateLimitedError, RateLimiter, withRetry } from '../pool'
 import type { OptionChain, OptionQuote, OptionsProvider } from '../types'
 
 const BASE = 'https://cdn.cboe.com/api/global/delayed_quotes/options'
@@ -116,9 +116,24 @@ export class CboeProvider implements OptionsProvider {
   readonly suppliesIv = true
 
   private readonly limiter = new RateLimiter(RATE_PER_MINUTE)
+  /**
+   * How long a caller will queue behind the rate limiter before giving up.
+   *
+   * Undefined for batch jobs, which should wait their turn. Set for anything
+   * serving a page: when a scan is running in another process, both processes
+   * pace independently, exceed the shared limit and trigger 429 backoffs. Without
+   * a budget a page request simply sits inside that backoff -- which is precisely
+   * how a click turned into a 57-second load.
+   */
+  private readonly waitBudgetMs?: number
+
   private readonly cache = new Map<string, ParsedChain>()
   /** In-flight requests, so concurrent callers for one symbol share a single fetch. */
   private readonly inFlight = new Map<string, Promise<ParsedChain>>()
+
+  constructor(opts: { waitBudgetMs?: number } = {}) {
+    this.waitBudgetMs = opts.waitBudgetMs
+  }
 
   private async load(symbol: string): Promise<ParsedChain> {
     const key = symbol.toUpperCase()
@@ -160,7 +175,7 @@ export class CboeProvider implements OptionsProvider {
 
     const raw = await withRetry(
       async () => {
-        await this.limiter.acquire()
+        await this.limiter.acquire(this.waitBudgetMs)
         const res = await fetch(url, {
           headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
         })
@@ -176,9 +191,15 @@ export class CboeProvider implements OptionsProvider {
         this.limiter.succeeded()
         return (await res.json()) as RawPayload
       },
-      // 403/404 mean this symbol has no chain here (NVR, BRK-B); retrying cannot
-      // help. 429 is retried, and each attempt widens the pacing further.
-      { attempts: 4, baseDelayMs: 1000, shouldRetry: (e) => !/http 40[34]/.test(String(e)) },
+      {
+        attempts: 4,
+        baseDelayMs: 1000,
+        // 403/404 mean this symbol has no chain here (NVR, BRK-B) and retrying
+        // cannot help. RateLimitedError is a decision not to wait, so retrying it
+        // would just re-make the same decision three more times. 429 IS retried,
+        // and each attempt widens the pacing further.
+        shouldRetry: (e) => !(e instanceof RateLimitedError) && !/http 40[34]/.test(String(e)),
+      },
     )
 
     const data = raw.data

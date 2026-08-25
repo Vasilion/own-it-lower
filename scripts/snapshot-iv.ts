@@ -14,6 +14,9 @@
 // Must come first: it populates process.env before db/index.ts reads DATABASE_URL.
 import './load-env'
 
+// Batch job: queue patiently behind the rate limiter rather than failing fast.
+process.env.BATCH_MODE = '1'
+
 import { eq, sql } from 'drizzle-orm'
 
 import { UNIVERSE } from '../data/universe'

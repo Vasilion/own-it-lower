@@ -15,6 +15,9 @@
 
 import './load-env'
 
+// Batch job: queue patiently behind the rate limiter rather than failing fast.
+process.env.BATCH_MODE = '1'
+
 import { desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { UNIVERSE } from '../data/universe'

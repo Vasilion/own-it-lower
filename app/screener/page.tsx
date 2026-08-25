@@ -39,9 +39,9 @@ export default async function ScreenerPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Screener</h1>
         <p className="text-[13px] mt-1 max-w-2xl" style={{ color: 'var(--text-muted)' }}>
-          Every S&amp;P 500 name, scored on whether it is a business worth owning that has pulled
-          back to support with option premium worth collecting. Sorted by that combination, not by
-          yield.
+          The S&amp;P 500 plus liquid names outside the index and the major ETFs, each scored on
+          whether it is worth owning and has pulled back to support with option premium worth
+          collecting. Sorted by that combination, not by yield.
         </p>
         {date && (
           <p className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>

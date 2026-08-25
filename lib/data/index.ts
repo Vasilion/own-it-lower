@@ -60,7 +60,7 @@ function buildProvider(): OptionsProvider {
 
   switch (explicit) {
     case 'cboe':
-      return new CboeProvider()
+      return new CboeProvider(cboeOptions())
     case 'tradier':
       if (!tradierToken) throw new Error('OPTIONS_PROVIDER=tradier but TRADIER_ACCESS_TOKEN is not set')
       return new TradierProvider(tradierToken, tradierMode)
@@ -73,5 +73,16 @@ function buildProvider(): OptionsProvider {
   }
 
   if (tradierToken) return new TradierProvider(tradierToken, tradierMode)
-  return new CboeProvider()
+  return new CboeProvider(cboeOptions())
+}
+
+/**
+ * Batch jobs queue patiently; request-serving code does not.
+ *
+ * Scripts set BATCH_MODE=1. Everything else is assumed to be serving a page, where
+ * an honest "try again in a moment" beats a browser tab hanging for the length of
+ * a 429 cooldown.
+ */
+function cboeOptions(): { waitBudgetMs?: number } {
+  return env('BATCH_MODE') === '1' ? {} : { waitBudgetMs: 8_000 }
 }
