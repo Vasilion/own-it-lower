@@ -1,0 +1,43 @@
+# AWS Amplify Hosting build spec.
+#
+# This app is server-rendered: /put/[symbol] and /api/v1/* run per request, and
+# / and /screener use ISR. Amplify must therefore build it on the WEB_COMPUTE
+# platform, not as a static site. It detects that from the Next.js output, but if
+# the console shows "Static" the app's platform setting needs changing to
+# "Next.js - SSR" or the dynamic routes will 404.
+#
+# Two things that reliably break Next builds on Amplify, both handled below:
+#
+#   1. pnpm. Amplify's image defaults to npm, and `npm ci` against a
+#      pnpm-lock.yaml fails outright. Corepack activates the exact pnpm version
+#      pinned in package.json.
+#   2. Node version. Amplify no longer supports Node 18 and older for compute;
+#      .nvmrc pins 20, which is both supported by Amplify and what CI uses.
+#
+# Next.js is pinned to 15 deliberately. Amplify supports Next 12-15 for SSR;
+# 16 is not on their supported matrix as of August 2026.
+
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - nvm use $(cat .nvmrc) || nvm install $(cat .nvmrc)
+        - corepack enable
+        - corepack prepare --activate
+        - pnpm install --frozen-lockfile
+    build:
+      commands:
+        - pnpm build
+  artifacts:
+    # For a Next.js SSR app Amplify reads the whole .next directory, including
+    # the server bundle. Do not narrow this to a static export directory.
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+      # Preserves ISR and compiler output between builds; without it every deploy
+      # rebuilds every page from cold.
+      - .next/cache/**/*
