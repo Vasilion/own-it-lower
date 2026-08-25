@@ -27,6 +27,7 @@ import { mapPool } from '../lib/data'
 import { computeIvRank } from '../lib/engine/ivrank'
 import { scoreSetup } from '../lib/engine/setup'
 import { analyzeSymbol } from '../lib/server/analyze'
+import { BatchWriter } from './batch-writer'
 
 const CONCURRENCY = 3
 const TARGET_DELTA = 0.3
@@ -147,6 +148,44 @@ async function scanSymbol(symbol: string, today: string, ivHistory: number[]): P
   }
 }
 
+/** Upsert one batch of scan rows. */
+async function writeBatch(rows: ScanRow[]): Promise<void> {
+  await getDb()
+    .insert(screenerResults)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [screenerResults.symbol, screenerResults.snapshotDate],
+      set: {
+        spot: sql`excluded.spot`,
+        sector: sql`excluded.sector`,
+        setupScore: sql`excluded.setup_score`,
+        qualityScore: sql`excluded.quality_score`,
+        discountScore: sql`excluded.discount_score`,
+        qualityFailures: sql`excluded.quality_failures`,
+        trend: sql`excluded.trend`,
+        sma200: sql`excluded.sma200`,
+        distanceFrom200: sql`excluded.distance_from_200`,
+        rsi14: sql`excluded.rsi14`,
+        percentB: sql`excluded.percent_b`,
+        marketCap: sql`excluded.market_cap`,
+        debtToEquity: sql`excluded.debt_to_equity`,
+        freeCashflow: sql`excluded.free_cashflow`,
+        nextEarnings: sql`excluded.next_earnings`,
+        atmIv: sql`excluded.atm_iv`,
+        ivRank: sql`excluded.iv_rank`,
+        bestStrike: sql`excluded.best_strike`,
+        bestExpiry: sql`excluded.best_expiry`,
+        bestDte: sql`excluded.best_dte`,
+        bestDelta: sql`excluded.best_delta`,
+        bestPremium: sql`excluded.best_premium`,
+        bestAnnualized: sql`excluded.best_annualized`,
+        bestDownsideBuffer: sql`excluded.best_downside_buffer`,
+        bestOpenInterest: sql`excluded.best_open_interest`,
+        bestCollateral: sql`excluded.best_collateral`,
+      },
+    })
+}
+
 async function main() {
   const argv = process.argv.slice(2)
   const dryRun = argv.includes('--dry')
@@ -174,9 +213,31 @@ async function main() {
   }
 
   const started = Date.now()
-  const results = await mapPool(symbols, CONCURRENCY, (s) =>
-    scanSymbol(s, today, ivHistory.get(s) ?? []),
+
+  // Rows are written as they arrive, not accumulated for a single insert at the
+  // end. A 20-minute job that fails at symbol 590 would otherwise discard every
+  // row it had already computed, and the only symptom would be an empty screen
+  // the next morning.
+  const writer = new BatchWriter<ScanRow>(
+    50,
+    async (batch) => {
+      if (!dryRun) await writeBatch(batch)
+    },
+    // Progress lands on the run ledger too, so a scan in flight can be watched
+    // from the database rather than only from the console.
+    async (total) => {
+      console.log(`[scan] ${total}/${symbols.length} written`)
+      if (runId !== null) {
+        await getDb().update(snapshotRuns).set({ succeeded: total }).where(eq(snapshotRuns.id, runId))
+      }
+    },
   )
+
+  const results = await mapPool(symbols, CONCURRENCY, async (s) => {
+    const row = await scanSymbol(s, today, ivHistory.get(s) ?? [])
+    writer.add(row)
+    return row
+  })
 
   const rows = results.flatMap((r) => (r.value ? [r.value] : []))
   let failures = results.filter((r) => r.error)
@@ -189,51 +250,19 @@ async function main() {
     const swept = await mapPool(
       retryable.map((f) => f.item as string),
       1,
-      (s) => scanSymbol(s, today, ivHistory.get(s) ?? []),
+      async (s) => {
+        const row = await scanSymbol(s, today, ivHistory.get(s) ?? [])
+        writer.add(row)
+        return row
+      },
     )
     rows.push(...swept.flatMap((r) => (r.value ? [r.value] : [])))
     const stillBad = new Set(swept.filter((r) => r.error).map((r) => r.item))
     failures = failures.filter((f) => stillBad.has(f.item) || PERMANENT_FAILURE.test(f.error!.message))
   }
 
-  if (!dryRun && rows.length > 0) {
-    for (let i = 0; i < rows.length; i += 100) {
-      await getDb()
-        .insert(screenerResults)
-        .values(rows.slice(i, i + 100))
-        .onConflictDoUpdate({
-          target: [screenerResults.symbol, screenerResults.snapshotDate],
-          set: {
-            spot: sql`excluded.spot`,
-            sector: sql`excluded.sector`,
-            setupScore: sql`excluded.setup_score`,
-            qualityScore: sql`excluded.quality_score`,
-            discountScore: sql`excluded.discount_score`,
-            qualityFailures: sql`excluded.quality_failures`,
-            trend: sql`excluded.trend`,
-            sma200: sql`excluded.sma200`,
-            distanceFrom200: sql`excluded.distance_from_200`,
-            rsi14: sql`excluded.rsi14`,
-            percentB: sql`excluded.percent_b`,
-            marketCap: sql`excluded.market_cap`,
-            debtToEquity: sql`excluded.debt_to_equity`,
-            freeCashflow: sql`excluded.free_cashflow`,
-            nextEarnings: sql`excluded.next_earnings`,
-            atmIv: sql`excluded.atm_iv`,
-            ivRank: sql`excluded.iv_rank`,
-            bestStrike: sql`excluded.best_strike`,
-            bestExpiry: sql`excluded.best_expiry`,
-            bestDte: sql`excluded.best_dte`,
-            bestDelta: sql`excluded.best_delta`,
-            bestPremium: sql`excluded.best_premium`,
-            bestAnnualized: sql`excluded.best_annualized`,
-            bestDownsideBuffer: sql`excluded.best_downside_buffer`,
-            bestOpenInterest: sql`excluded.best_open_interest`,
-            bestCollateral: sql`excluded.best_collateral`,
-          },
-        })
-    }
-  }
+  const { written, failedBatches } = await writer.drain()
+  if (failedBatches > 0) console.error(`[scan] ${failedBatches} batches failed to write`)
 
   if (runId !== null) {
     const reasons = [...new Set(failures.map((f) => f.error!.message))].slice(0, 10)
@@ -241,7 +270,7 @@ async function main() {
       .update(snapshotRuns)
       .set({
         finishedAt: new Date(),
-        succeeded: rows.length,
+        succeeded: written,
         failed: failures.length,
         notes: `screener-scan${reasons.length ? `: ${reasons.join(' | ')}` : ''}`,
       })

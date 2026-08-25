@@ -23,6 +23,7 @@ import { UNIVERSE } from '../data/universe'
 import { getDb } from '../db'
 import { ivSnapshots, snapshotRuns, universe } from '../db/schema'
 import { getOptionsProvider, mapPool, type OptionQuote, type OptionsProvider } from '../lib/data'
+import { BatchWriter } from './batch-writer'
 import { CboeProvider } from '../lib/data/providers/cboe'
 
 const TARGET_DTE = 30
@@ -156,6 +157,26 @@ async function snapshotSymbol(
   }
 }
 
+/** Upsert one batch of snapshot rows. */
+async function writeBatch(rows: SnapshotRow[]): Promise<void> {
+  await getDb()
+    .insert(ivSnapshots)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [ivSnapshots.symbol, ivSnapshots.snapshotDate],
+      set: {
+        atmIv: sql`excluded.atm_iv`,
+        callIv: sql`excluded.call_iv`,
+        putIv: sql`excluded.put_iv`,
+        publishedIv30: sql`excluded.published_iv30`,
+        nearStrikeCount: sql`excluded.near_strike_count`,
+        spot: sql`excluded.spot`,
+        expiry: sql`excluded.expiry`,
+        dte: sql`excluded.dte`,
+      },
+    })
+}
+
 async function seedUniverse(): Promise<void> {
   const rows = UNIVERSE.map((m) => ({ symbol: m.symbol, name: m.name, sector: m.sector }))
   for (let i = 0; i < rows.length; i += 200) {
@@ -216,59 +237,53 @@ async function main() {
   }
 
   const started = Date.now()
-  const results = await mapPool(symbols, CONCURRENCY, (s) =>
-    snapshotSymbol(provider, s, today, spots.get(s)),
+
+  // Written as they arrive rather than accumulated for one insert at the end.
+  // Losing a whole night of IV history to a failure near the finish would be
+  // permanent -- this history cannot be backfilled from a cheap source.
+  const writer = new BatchWriter<SnapshotRow>(
+    50,
+    async (batch) => {
+      if (!dryRun) await writeBatch(batch)
+    },
+    async (total) => {
+      console.log(`[snapshot-iv] ${total}/${symbols.length} written`)
+      if (runId !== null) {
+        await getDb().update(snapshotRuns).set({ succeeded: total }).where(eq(snapshotRuns.id, runId))
+      }
+    },
   )
+
+  const results = await mapPool(symbols, CONCURRENCY, async (s) => {
+    const row = await snapshotSymbol(provider, s, today, spots.get(s))
+    writer.add(row)
+    return row
+  })
 
   const rows = results.flatMap((r) => (r.value ? [r.value] : []))
   let failures = results.filter((r) => r.error)
 
-  /**
-   * Retry sweep.
-   *
-   * Transient failures mid-scan are the quiet killer here: the symbol simply has
-   * no row for the day, the job still reports mostly-success, and the gap only
-   * surfaces months later as a hole in that ticker's IV history. By the time the
-   * sweep runs the rate limiter has widened its pacing, so a second pass over a
-   * much smaller set usually clears most of them.
-   */
   const retryable = failures.filter((f) => !PERMANENT_FAILURE.test(f.error!.message))
   if (retryable.length > 0) {
     console.log(`[snapshot-iv] retry sweep on ${retryable.length} transient failures...`)
     const swept = await mapPool(
       retryable.map((f) => f.item as string),
       1,
-      (s) => snapshotSymbol(provider, s, today, spots.get(s)),
+      async (s) => {
+        const row = await snapshotSymbol(provider, s, today, spots.get(s))
+        writer.add(row)
+        return row
+      },
     )
-
     const recovered = swept.flatMap((r) => (r.value ? [r.value] : []))
     rows.push(...recovered)
-
     const stillBad = new Set(swept.filter((r) => r.error).map((r) => r.item))
     failures = failures.filter((f) => stillBad.has(f.item) || PERMANENT_FAILURE.test(f.error!.message))
     console.log(`[snapshot-iv] sweep recovered ${recovered.length}, ${failures.length} still failing`)
   }
 
-  if (!dryRun && rows.length > 0) {
-    for (let i = 0; i < rows.length; i += 100) {
-      await getDb()
-        .insert(ivSnapshots)
-        .values(rows.slice(i, i + 100))
-        .onConflictDoUpdate({
-          target: [ivSnapshots.symbol, ivSnapshots.snapshotDate],
-          set: {
-            atmIv: sql`excluded.atm_iv`,
-            callIv: sql`excluded.call_iv`,
-            putIv: sql`excluded.put_iv`,
-            publishedIv30: sql`excluded.published_iv30`,
-            nearStrikeCount: sql`excluded.near_strike_count`,
-            spot: sql`excluded.spot`,
-            expiry: sql`excluded.expiry`,
-            dte: sql`excluded.dte`,
-          },
-        })
-    }
-  }
+  const { written, failedBatches } = await writer.drain()
+  if (failedBatches > 0) console.error(`[snapshot-iv] ${failedBatches} batches failed to write`)
 
   // Keep a sample of reasons on the run row so triage doesn't require trawling CI logs.
   const reasons = [...new Set(failures.map((f) => f.error!.message))].slice(0, 10)
@@ -277,7 +292,7 @@ async function main() {
       .update(snapshotRuns)
       .set({
         finishedAt: new Date(),
-        succeeded: rows.length,
+        succeeded: written,
         failed: failures.length,
         notes: reasons.length > 0 ? reasons.join(' | ') : null,
       })
