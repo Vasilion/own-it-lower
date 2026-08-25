@@ -93,6 +93,7 @@ async function scanSymbol(symbol: string, today: string, ivHistory: number[]): P
     qualityScore: data.quality?.score ?? null,
     discountScore: data.context.discountScore ?? null,
     ivRank: ivr?.ivRank ?? null,
+    ivToHv: impliedToRealized(currentIv, hv30),
     qualityFailures: data.quality?.failures ?? [],
   })
 

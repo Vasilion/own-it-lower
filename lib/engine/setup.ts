@@ -23,8 +23,36 @@ export interface SetupInputs {
   discountScore: number | null
   /** 0-100 from our own accumulated history. Null until ~40 observations exist. */
   ivRank: number | null
+  /**
+   * Implied divided by realised volatility, used as the premium measure until IV
+   * Rank has enough history to take over.
+   *
+   * Without this the IV leg abstained for every symbol, so the screener ranked on
+   * quality and discount alone -- and put GOOG second at 95 while its options were
+   * priced at 0.68x realised volatility. A premium screener that ignores whether
+   * the premium is any good is only doing two thirds of its job.
+   */
+  ivToHv: number | null
   /** Hard quality-floor breaches. Any of these caps the setup score. */
   qualityFailures: string[]
+}
+
+/**
+ * Score implied-to-realised richness, 0-100.
+ *
+ * Deliberately not monotonic. Below parity the options are cheap relative to how
+ * the stock actually moves, which is a bad moment to sell them. The sweet spot is
+ * the ordinary variance risk premium. Far above it, the extra is usually an event
+ * being priced in -- real compensation for real risk, not an edge -- so the curve
+ * comes back down rather than rewarding it without limit.
+ */
+export function scoreIvRichness(ratio: number): number {
+  if (ratio <= 0.7) return 0
+  if (ratio < 1.0) return ((ratio - 0.7) / 0.3) * 45
+  if (ratio < 1.2) return 45 + ((ratio - 1.0) / 0.2) * 40
+  if (ratio <= 1.6) return 85 + ((ratio - 1.2) / 0.4) * 15
+  if (ratio <= 2.2) return 100 - ((ratio - 1.6) / 0.6) * 45
+  return 50
 }
 
 export interface SetupResult {
@@ -68,17 +96,25 @@ export function scoreSetup(input: SetupInputs): SetupResult {
           : `technical setup ${Math.round(input.discountScore)}`,
     },
     {
-      key: 'ivrank',
-      label: 'IV Rank',
-      // Abstains, rather than scoring zero, until enough history exists. Treating
-      // "not measured yet" as "no premium available" would rank the entire
-      // universe as unattractive for the first two months of the product's life.
-      score: input.ivRank === null ? null : scoreAbove(input.ivRank, 20, 65),
+      key: 'premium',
+      label: 'Premium',
+      // Prefers IV Rank once it exists -- it is the better measure, because it
+      // compares a stock to its own history rather than to its recent movement.
+      // Falls back to implied-vs-realised, which is available immediately.
+      // Abstains only when neither can be computed.
+      score:
+        input.ivRank !== null
+          ? scoreAbove(input.ivRank, 20, 65)
+          : input.ivToHv !== null
+            ? scoreIvRichness(input.ivToHv)
+            : null,
       weight: 0.3,
       detail:
-        input.ivRank === null
-          ? 'building IV history'
-          : `IV Rank ${Math.round(input.ivRank)}`,
+        input.ivRank !== null
+          ? `IV Rank ${Math.round(input.ivRank)}`
+          : input.ivToHv !== null
+            ? `options at ${input.ivToHv.toFixed(2)}x realised volatility`
+            : 'no volatility measure available',
     },
   ]
 

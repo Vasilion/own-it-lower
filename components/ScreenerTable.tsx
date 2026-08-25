@@ -102,6 +102,10 @@ const MOBILE_SORTS: Array<{ key: SortKey; label: string }> = [
 export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'setupScore', dir: 'desc' })
   const [maxCollateral, setMaxCollateral] = useState(0)
+  // The setup score judges the STOCK, not the contract, so a fine setup can sit on
+  // negligible premium -- HYG ranked second at 92 while paying 2.2% annualised.
+  // The column shows it, but the user should not have to catch that by eye.
+  const [minAnnualized, setMinAnnualized] = useState(0)
   const [pullbacksOnly, setPullbacksOnly] = useState(false)
   const [hideDisqualified, setHideDisqualified] = useState(true)
   const [sector, setSector] = useState('all')
@@ -120,6 +124,9 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
     // Affordability is the filter that actually decides what a given account can
     // trade, and it is the one most screeners leave out entirely.
     if (maxCollateral > 0) out = out.filter((r) => r.bestCollateral !== null && r.bestCollateral <= maxCollateral)
+    if (minAnnualized > 0) {
+      out = out.filter((r) => r.bestAnnualized !== null && r.bestAnnualized * 100 >= minAnnualized)
+    }
 
     return [...out].sort((a, b) => {
       if (sort.key === 'symbol') {
@@ -134,13 +141,17 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
       if (bv === null) return -1
       return sort.dir === 'desc' ? bv - av : av - bv
     })
-  }, [rows, sort, maxCollateral, pullbacksOnly, hideDisqualified, sector])
+  }, [rows, sort, maxCollateral, minAnnualized, pullbacksOnly, hideDisqualified, sector])
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
 
   const activeFilters =
-    (maxCollateral > 0 ? 1 : 0) + (pullbacksOnly ? 1 : 0) + (sector !== 'all' ? 1 : 0) + (hideDisqualified ? 1 : 0)
+    (maxCollateral > 0 ? 1 : 0) +
+    (minAnnualized > 0 ? 1 : 0) +
+    (pullbacksOnly ? 1 : 0) +
+    (sector !== 'all' ? 1 : 0) +
+    (hideDisqualified ? 1 : 0)
 
   return (
     <>
@@ -178,6 +189,27 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
               className="w-32 rounded-lg border px-2 py-1.5 nums bg-transparent text-right"
               style={{ borderColor: 'var(--border)' }}
             />
+          </label>
+
+          <label
+            className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto"
+            title="Filters on the representative 30-delta contract's annualised return"
+          >
+            <span style={{ color: 'var(--text-muted)' }}>Annualised over</span>
+            <span className="flex items-center gap-1">
+              <input
+                type="number"
+                value={minAnnualized || ''}
+                placeholder="any"
+                inputMode="numeric"
+                step={1}
+                min={0}
+                onChange={(e) => setMinAnnualized(Math.max(0, Number(e.target.value) || 0))}
+                className="w-20 rounded-lg border px-2 py-1.5 nums bg-transparent text-right"
+                style={{ borderColor: 'var(--border)' }}
+              />
+              <span style={{ color: 'var(--text-faint)' }}>%</span>
+            </span>
           </label>
 
           <label className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
