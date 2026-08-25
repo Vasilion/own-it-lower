@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next'
 import { Anton, Inter, JetBrains_Mono } from 'next/font/google'
 import Link from 'next/link'
 
+import InstallPrompt from '@/components/InstallPrompt'
+
 import './globals.css'
 
 // Same stack as Leaving The Matrix: Anton for display, Inter for UI, JetBrains
@@ -17,10 +19,21 @@ export const metadata: Metadata = {
   },
   description:
     'Find cash-secured puts on quality companies that have pulled back. Ranked against settings you choose, with the arithmetic shown.',
+  // iOS ignores the manifest for these; they have to be declared explicitly.
+  appleWebApp: {
+    capable: true,
+    title: 'Own It Lower',
+    statusBarStyle: 'black-translucent',
+  },
+  icons: {
+    apple: '/icons/apple-touch-icon.png',
+  },
 }
 
 export const viewport: Viewport = {
   themeColor: '#050507',
+  // Extends the app behind the notch when installed on iOS.
+  viewportFit: 'cover',
   // Pinch-zoom stays available: disabling it on a page full of dense figures
   // would be a genuine accessibility problem.
   width: 'device-width',
@@ -53,6 +66,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
 
         <main className="flex-1">{children}</main>
+
+        <InstallPrompt />
 
         {/*
           The disclaimer lives in the layout rather than on a page the user has to
