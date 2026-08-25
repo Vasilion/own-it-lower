@@ -1,26 +1,118 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Own It Lower — plain-spoken, precise, anti-hype.
+ *
+ * The visual language is a measuring instrument, not a trading floor: restrained
+ * neutrals, one accent, and colour used only where it carries information. Green
+ * never means "buy" here -- it means a number sits high in its range -- which is
+ * both the honest design choice and the compliant one.
+ */
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  --bg: #fbfbfa;
+  --bg-raised: #ffffff;
+  --bg-sunken: #f4f4f2;
+  --border: #e4e4e1;
+  --border-strong: #d3d3cf;
+  --text: #1b1b19;
+  --text-muted: #6b6b66;
+  --text-faint: #97978f;
+  --accent: #0f766e;
+  --accent-soft: #ccfbf1;
+  --tier-high: #15803d;
+  --tier-mid: #a16207;
+  --tier-low: #9a3412;
+  --tier-none: #6b6b66;
+  --warn-bg: #fef6e7;
+  --warn-border: #f0d9a8;
+  --warn-text: #7c5a12;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme='light']) {
+    --bg: #131314;
+    --bg-raised: #1b1b1d;
+    --bg-sunken: #0e0e0f;
+    --border: #2c2c2f;
+    --border-strong: #3d3d41;
+    --text: #ededea;
+    --text-muted: #9d9d97;
+    --text-faint: #6e6e69;
+    --accent: #2dd4bf;
+    --accent-soft: #134e4a;
+    --tier-high: #4ade80;
+    --tier-mid: #fbbf24;
+    --tier-low: #fb923c;
+    --tier-none: #9d9d97;
+    --warn-bg: #2a2113;
+    --warn-border: #4a3a1c;
+    --warn-text: #e8c88a;
   }
 }
 
+:root[data-theme='dark'] {
+  --bg: #131314;
+  --bg-raised: #1b1b1d;
+  --bg-sunken: #0e0e0f;
+  --border: #2c2c2f;
+  --border-strong: #3d3d41;
+  --text: #ededea;
+  --text-muted: #9d9d97;
+  --text-faint: #6e6e69;
+  --accent: #2dd4bf;
+  --accent-soft: #134e4a;
+  --tier-high: #4ade80;
+  --tier-mid: #fbbf24;
+  --tier-low: #fb923c;
+  --tier-none: #9d9d97;
+  --warn-bg: #2a2113;
+  --warn-border: #4a3a1c;
+  --warn-text: #e8c88a;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular figures everywhere numbers are compared down a column. */
+.nums {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.hairline {
+  border-color: var(--border);
+}
+
+/* Wide tables scroll inside their own container; the page body never does. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+th[data-sortable] {
+  cursor: pointer;
+  user-select: none;
+}
+th[data-sortable]:hover {
+  color: var(--text);
+}
+
+input[type='range'] {
+  accent-color: var(--accent);
 }

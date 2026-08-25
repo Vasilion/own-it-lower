@@ -6,7 +6,7 @@ Screens large-caps with healthy balance sheets that are trading into technical
 support with elevated implied volatility, then ranks individual put contracts
 against the settings you choose and shows the arithmetic behind the ranking.
 
-**Status:** Phase 0 — data pipeline. No UI yet.
+**Status:** Engine and screener UI working end to end. No auth or billing yet.
 
 ---
 
@@ -40,6 +40,33 @@ pnpm snapshot:iv             # full universe, writes to Neon
 The only credential this project needs is a Neon connection string. The options
 data source requires no account.
 
+## The web app
+
+```bash
+pnpm dev        # then open /put/NVDA
+```
+
+- `/` — landing page and ticker search
+- `/put/[symbol]` — the screener: stock context, then the ranked chain
+- `/api/v1/analyze/[symbol]` — raw analysis payload
+
+**Ranking happens in the browser.** The server assembles the ingredients once
+(chain, technicals, risk-free rate) and the client runs `rankPuts` on every
+settings change, so moving a slider re-ranks instantly with no round trip. That
+is only possible because the engine is pure TypeScript with no framework or
+network dependency — the same property that will let a mobile client reuse it.
+
+Two interface rules worth preserving:
+
+- **The fit score renders as a number and a colour, never as a word.** A label
+  like "Strong" sitting in a table row reads as an instruction to act. The
+  wording lives in a hover tooltip, where it describes rather than commands.
+- **"No results" always names the binding constraint.** A silent empty table
+  leaves the user unable to tell whether the market has nothing today or one of
+  their own settings is too tight. When position size is the blocker the UI says
+  how much capital the cheapest qualifying contract needs, and offers a button
+  that sets it.
+
 ## Commands
 
 | Command                | What it does                                                  |
@@ -48,6 +75,7 @@ data source requires no account.
 | `pnpm snapshot:iv`     | Daily ATM IV capture for the universe (`--dry` to skip writes) |
 | `pnpm db:push`         | Push the Drizzle schema to Neon                                |
 | `pnpm db:studio`       | Browse the database                                            |
+| `pnpm rank AAPL`       | Rank one chain from the CLI (`--compare` for all three stances) |
 | `pnpm typecheck`       | `tsc --noEmit`                                                 |
 
 ## Two things worth knowing before you touch the data layer
