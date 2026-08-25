@@ -13,7 +13,10 @@ import { UNIVERSE } from '@/data/universe'
  */
 export const revalidate = 86400
 
-const BASE = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '') ?? 'https://ownitlower.com'
+// Falls back to the live host rather than an aspirational one: a sitemap that
+// advertises a domain nobody owns sends every crawler to a dead address.
+// NEXT_PUBLIC_SITE_URL overrides it if the app ever moves.
+const BASE = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '') ?? 'https://ownitlower.leavingthematrix.io'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date()
