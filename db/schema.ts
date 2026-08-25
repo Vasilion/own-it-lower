@@ -97,3 +97,70 @@ export const snapshotRuns = pgTable('snapshot_runs', {
 
 export type IvSnapshot = typeof ivSnapshots.$inferSelect
 export type UniverseRow = typeof universe.$inferSelect
+
+/**
+ * Nightly universe scan: one row per symbol per day.
+ *
+ * This is the symbol-level half of the product, and it deliberately does NOT
+ * store a contract ranking. Fit depends on settings the user has not chosen yet,
+ * so precomputing a ranking would mean precomputing it for every possible preset.
+ * Instead the scan answers "which businesses are worth looking at today" -- quality,
+ * discount, IV -- and the deep-dive page answers "which contract" live against the
+ * chain. Two questions, two stages, and only the first one is expensive.
+ *
+ * The `best*` columns are a single representative near-30-delta contract, stored so
+ * the screener can show a concrete number rather than an abstract score. They are an
+ * illustration, not the recommendation.
+ */
+export const screenerResults = pgTable(
+  'screener_results',
+  {
+    id: serial('id').primaryKey(),
+    symbol: text('symbol').notNull(),
+    snapshotDate: date('snapshot_date').notNull(),
+
+    spot: real('spot').notNull(),
+    sector: text('sector'),
+
+    /** 0-100 composite: quality, discount, and IV rank when available. */
+    setupScore: real('setup_score'),
+    qualityScore: real('quality_score'),
+    discountScore: real('discount_score'),
+    /** Non-empty means the underlying failed the hard quality floor. */
+    qualityFailures: text('quality_failures'),
+
+    trend: text('trend'),
+    sma200: real('sma200'),
+    distanceFrom200: real('distance_from_200'),
+    rsi14: real('rsi14'),
+    percentB: real('percent_b'),
+
+    marketCap: real('market_cap'),
+    debtToEquity: real('debt_to_equity'),
+    freeCashflow: real('free_cashflow'),
+    nextEarnings: date('next_earnings'),
+
+    atmIv: real('atm_iv'),
+    /** Null until roughly 40 daily observations exist for this symbol. */
+    ivRank: real('iv_rank'),
+
+    /** Representative contract: the closest to 30-delta inside 21-49 DTE. */
+    bestStrike: real('best_strike'),
+    bestExpiry: date('best_expiry'),
+    bestDte: integer('best_dte'),
+    bestDelta: real('best_delta'),
+    bestPremium: real('best_premium'),
+    bestAnnualized: real('best_annualized'),
+    bestDownsideBuffer: real('best_downside_buffer'),
+    bestOpenInterest: integer('best_open_interest'),
+    bestCollateral: real('best_collateral'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('screener_results_symbol_date_idx').on(t.symbol, t.snapshotDate),
+    index('screener_results_date_idx').on(t.snapshotDate),
+  ],
+)
+
+export type ScreenerRow = typeof screenerResults.$inferSelect

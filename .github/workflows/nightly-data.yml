@@ -1,0 +1,74 @@
+name: Nightly data
+
+# Two jobs, in order:
+#   1. IV snapshot  - ~30-day ATM implied volatility for the whole universe. This
+#                     history is what IV Rank is computed from and cannot be
+#                     backfilled from a cheap source, so a missed day is gone for good.
+#   2. Screener scan - quality, discount and IV rank per symbol, plus one
+#                     representative contract, written to screener_results.
+#
+# Order matters: the scan reads the IV history the snapshot just wrote, so running it
+# second is what lets today's rank include today's observation.
+#
+# On GitHub Actions rather than a Vercel cron because together they fan out to
+# thousands of third-party calls and take tens of minutes, not seconds.
+
+on:
+  schedule:
+    # 21:30 UTC weekdays — comfortably after the 4pm ET close in both EST and EDT.
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-data
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    # Snapshot plus scan across ~500 symbols, both rate-paced, plus retry sweeps.
+    # The ceiling is generous so a slow night fails on data quality, not the clock.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Fail fast and loudly if the vendor has silently degraded. A hollowed-out
+      # feed still answers 200 with well-formed chains, so without this the job
+      # would go green while writing placeholder data into the history table.
+      - name: Verify data provider
+        env:
+          OPTIONS_PROVIDER: ${{ vars.OPTIONS_PROVIDER }}
+          TRADIER_ACCESS_TOKEN: ${{ secrets.TRADIER_ACCESS_TOKEN }}
+          TRADIER_MODE: ${{ vars.TRADIER_MODE || 'sandbox' }}
+        run: pnpm check:provider
+
+      - name: Capture IV snapshot
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPTIONS_PROVIDER: ${{ vars.OPTIONS_PROVIDER }}
+          TRADIER_ACCESS_TOKEN: ${{ secrets.TRADIER_ACCESS_TOKEN }}
+          TRADIER_MODE: ${{ vars.TRADIER_MODE || 'sandbox' }}
+        run: pnpm snapshot:iv
+
+      # Runs even if the snapshot failed: yesterday's IV history still supports a
+      # useful screen, and losing the whole night's scan over one bad fetch would
+      # leave the site showing stale rows for no good reason.
+      - name: Run screener scan
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPTIONS_PROVIDER: ${{ vars.OPTIONS_PROVIDER }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: pnpm scan

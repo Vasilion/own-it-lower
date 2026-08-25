@@ -18,11 +18,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-dvh flex flex-col">
         <header className="border-b hairline">
           <div className="mx-auto max-w-6xl px-5 md:px-6 h-14 flex items-center justify-between gap-4">
-            <Link href="/" className="font-semibold tracking-tight text-[15px]">
-              Own It&nbsp;
-              <span style={{ color: 'var(--accent)' }}>Lower</span>
-            </Link>
-            <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
+            <div className="flex items-center gap-6">
+              <Link href="/" className="font-semibold tracking-tight text-[15px]">
+                Own It&nbsp;
+                <span style={{ color: 'var(--accent)' }}>Lower</span>
+              </Link>
+              <Link href="/screener" className="text-[13px] hover:underline underline-offset-4">
+                Screener
+              </Link>
+            </div>
+            <span className="text-xs hidden sm:block" style={{ color: 'var(--text-faint)' }}>
               Educational tool · 15-minute delayed data
             </span>
           </div>
