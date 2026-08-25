@@ -1,0 +1,51 @@
+name: Daily IV snapshot
+
+# Captures ~30-day ATM implied volatility for the whole universe, once per trading day.
+# This history is what IV Rank is computed from and it cannot be backfilled from a free
+# source, so a missed day is gone for good. Runs on GitHub Actions rather than a Vercel
+# cron because it fans out to ~1000 third-party calls and takes minutes, not seconds.
+
+on:
+  schedule:
+    # 21:30 UTC weekdays — comfortably after the 4pm ET close in both EST and EDT.
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: iv-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Fail fast and loudly if the vendor has silently degraded. A hollowed-out
+      # feed still answers 200 with well-formed chains, so without this the job
+      # would go green while writing placeholder data into the history table.
+      - name: Verify data provider
+        env:
+          TRADIER_ACCESS_TOKEN: ${{ secrets.TRADIER_ACCESS_TOKEN }}
+          TRADIER_MODE: ${{ vars.TRADIER_MODE || 'sandbox' }}
+        run: pnpm check:provider
+
+      - name: Capture IV snapshot
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TRADIER_ACCESS_TOKEN: ${{ secrets.TRADIER_ACCESS_TOKEN }}
+          TRADIER_MODE: ${{ vars.TRADIER_MODE || 'sandbox' }}
+        run: pnpm snapshot:iv

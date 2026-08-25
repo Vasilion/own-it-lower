@@ -1,36 +1,108 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Own It Lower
 
-## Getting Started
+Find cash-secured puts worth selling on quality companies that have pulled back.
 
-First, run the development server:
+Screens large-caps with healthy balance sheets that are trading into technical
+support with elevated implied volatility, then ranks individual put contracts
+against the settings you choose and shows the arithmetic behind the ranking.
+
+**Status:** Phase 0 — data pipeline. No UI yet.
+
+---
+
+## What makes it different
+
+Barchart, OptionSamurai and Market Chameleon are filters: you type numeric ranges,
+you get rows back. This is a ranking engine — the same option chain comes back in a
+**different order** for two different users, because assignment appetite flips the
+scoring weights.
+
+|                    | "Happy to own it"              | "Premium only"          |
+| ------------------ | ------------------------------ | ----------------------- |
+| Delta band         | 0.30–0.40                      | 0.10–0.20               |
+| Heaviest weight    | Effective cost basis vs 200DMA | Probability OTM         |
+| Strike vs support  | Reward at/below support        | Reward well below       |
+| Earnings in window | Tolerable (cheaper entry)      | Heavy penalty           |
+| Optimises for      | Discount on the shares         | Premium per unit risk   |
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+cp .env.example .env.local   # then fill in the values
+pnpm check:provider          # confirm the data source is actually healthy
+pnpm db:push                 # create tables in Neon
+pnpm snapshot:iv --dry AAPL  # fetch + parse only, no database needed
+pnpm snapshot:iv             # full universe, writes to Neon
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Commands
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Command                | What it does                                                  |
+| ---------------------- | ------------------------------------------------------------- |
+| `pnpm check:provider`  | Asserts the options vendor returns genuinely usable data       |
+| `pnpm snapshot:iv`     | Daily ATM IV capture for the universe (`--dry` to skip writes) |
+| `pnpm db:push`         | Push the Drizzle schema to Neon                                |
+| `pnpm db:studio`       | Browse the database                                            |
+| `pnpm typecheck`       | `tsc --noEmit`                                                 |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Two things worth knowing before you touch the data layer
 
-## Learn More
+**1. Greeks are derived, not licensed.** Given IV, spot, strike, time and the
+risk-free rate, Black-Scholes produces every greek in closed form
+(`lib/engine/blackscholes.ts`). We never pay for a greeks feed — we only need chain
+quotes, which is far cheaper and more widely available.
 
-To learn more about Next.js, take a look at the following resources:
+**2. A data source can be hollowed out without ever returning an error.** Yahoo's
+free options endpoint was the original prototype source. As of 2026-08-25 it still
+answers HTTP 200 with well-formed chains — and across a full AAPL chain of 168
+contracts, every bid is zero, every open interest is zero, and IV comes back in an
+impossible 0–6.3% band. Nothing throws. That is why `pnpm check:provider` exists and
+why it runs in CI ahead of every snapshot: it asserts on the *shape of the values*,
+not on the response status.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Providers are pluggable behind `OptionsProvider` (`lib/data/types.ts`), so swapping
+vendors is a config change.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Why the IV snapshot runs before anything else exists
 
-## Deploy on Vercel
+IV Rank needs a rolling 52-week history of each ticker's own implied volatility. No
+vendor sells that cheaply — ORATS is $99/mo and most providers don't offer it at all.
+So we accumulate it ourselves, starting now. Every day the job runs adds a day of
+history that cannot be reconstructed later, which means the table appreciates on its
+own and becomes a genuine moat at this price point. A day the job doesn't run is a
+day gone for good.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Until roughly a year of history exists, `lib/engine/ivrank.ts` reports a shortened
+window honestly (`IV Rank (60d)`) rather than passing a 60-day rank off as annual.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Data licensing
+
+Options quotes originate from OPRA, and displaying them to end users is
+*redistribution* — a legal layer separate from holding an API key.
+
+- **OPRA charges nothing for data delayed 15+ minutes.** This product is delayed-only
+  by design. For choosing a 30-DTE strike that is entirely adequate, and it keeps
+  margins near-flat as usage grows: a 15-minute cache is lossless when the data can't
+  be fresher than 15 minutes, so API cost scales with universe size, not user count.
+- **Vendor terms are a separate gate from OPRA rules.** A vendor can forbid what OPRA
+  permits. Tradier's sandbox is licensed for development only. Confirm delayed
+  redistribution in writing before any of this reaches a paying user.
+
+## Compliance
+
+The product ranks contracts against settings the user chooses and shows the maths. It
+does not give advice.
+
+- No collection of financial circumstances — no net worth, income, tax status, goals.
+- Settings are a **strategy preset**, never a "risk tolerance profile."
+- Output is "ranked by fit to the settings you chose," never "we recommend."
+- Every figure shown is checkable arithmetic, never a verdict.
+- No performance claims and no track records.
+
+## Stack
+
+Next.js 16 · React 19 · Tailwind 4 · Drizzle · Neon Postgres · Vercel.
+Engine logic lives in `lib/engine` as pure TypeScript with no framework imports, so
+it can back a mobile client later without a rewrite. Heavy scans run in GitHub
+Actions and write to Neon — never in a request path.
