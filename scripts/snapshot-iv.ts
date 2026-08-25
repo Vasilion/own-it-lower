@@ -20,6 +20,7 @@ import { UNIVERSE } from '../data/universe'
 import { getDb } from '../db'
 import { ivSnapshots, snapshotRuns, universe } from '../db/schema'
 import { getOptionsProvider, mapPool, type OptionQuote, type OptionsProvider } from '../lib/data'
+import { CboeProvider } from '../lib/data/providers/cboe'
 
 const TARGET_DTE = 30
 const MIN_DTE = 14
@@ -92,9 +93,18 @@ interface SnapshotRow {
   atmIv: number
   callIv: number | null
   putIv: number | null
+  publishedIv30: number | null
+  nearStrikeCount: number
   spot: number
   expiry: string
   dte: number
+}
+
+/** Strikes this close to spot are what the ATM interpolation actually rests on. */
+const NEAR_MONEY_BAND = 0.1
+
+function countNearMoney(quotes: OptionQuote[], spot: number): number {
+  return quotes.filter((q) => tradeable(q) && Math.abs(q.strike - spot) / spot <= NEAR_MONEY_BAND).length
 }
 
 async function snapshotSymbol(
@@ -125,12 +135,18 @@ async function snapshotSymbol(
   const blended = callIv !== null && putIv !== null ? (callIv + putIv) / 2 : (callIv ?? putIv)
   if (blended === null) throw new Error('no tradeable strikes near the money')
 
+  // Free second opinion from providers that publish their own 30-day IV.
+  const publishedIv30 =
+    provider instanceof CboeProvider ? await provider.getPublishedIv30(symbol) : null
+
   return {
     symbol,
     snapshotDate: today,
     atmIv: blended,
     callIv,
     putIv,
+    publishedIv30,
+    nearStrikeCount: countNearMoney(chain.puts, chain.spot),
     spot: chain.spot,
     expiry: target.iso,
     dte: target.dte,
@@ -241,6 +257,8 @@ async function main() {
             atmIv: sql`excluded.atm_iv`,
             callIv: sql`excluded.call_iv`,
             putIv: sql`excluded.put_iv`,
+            publishedIv30: sql`excluded.published_iv30`,
+            nearStrikeCount: sql`excluded.near_strike_count`,
             spot: sql`excluded.spot`,
             expiry: sql`excluded.expiry`,
             dte: sql`excluded.dte`,
@@ -265,6 +283,25 @@ async function main() {
 
   const secs = ((Date.now() - started) / 1000).toFixed(1)
   console.log(`[snapshot-iv] done in ${secs}s — ${rows.length} stored, ${failures.length} failed`)
+
+  // Thin near-money chains are where our interpolation drifts from the provider's
+  // own published IV. Surface them rather than letting them blend into the average.
+  const thin = rows.filter((r) => r.nearStrikeCount < 3)
+  const diverged = rows.filter(
+    (r) => r.publishedIv30 !== null && Math.abs(r.atmIv - r.publishedIv30) > 0.03,
+  )
+  console.log(
+    `[snapshot-iv] quality: ${thin.length} thin (<3 near-money strikes), ` +
+      `${diverged.length} diverge >3pts from published IV`,
+  )
+  if (diverged.length > 0) {
+    for (const r of diverged.slice(0, 8)) {
+      console.log(
+        `  ${r.symbol.padEnd(6)} ours ${(r.atmIv * 100).toFixed(1)}% vs published ` +
+          `${(r.publishedIv30! * 100).toFixed(1)}%  (${r.nearStrikeCount} near strikes)`,
+      )
+    }
+  }
 
   for (const r of rows.slice(0, dryRun ? 20 : 5)) {
     console.log(

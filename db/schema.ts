@@ -45,6 +45,26 @@ export const ivSnapshots = pgTable(
     atmIv: real('atm_iv').notNull(),
     callIv: real('call_iv'),
     putIv: real('put_iv'),
+    /**
+     * The provider's own published 30-day IV, when it offers one (CBOE does).
+     *
+     * Stored rather than discarded because it is an independent second opinion on
+     * a number we derived ourselves. On liquid names the two agree to within a
+     * tenth of a point; where they diverge, it is a reliable signal that our
+     * interpolation had too little to work with.
+     */
+    publishedIv30: real('published_iv30'),
+    /**
+     * Tradeable put strikes within 10% of spot -- a data-quality marker.
+     *
+     * Measured 2026-08-25: divergence from the published IV tracks this almost
+     * perfectly. AES had ONE usable near-money strike and came out 6.8 points
+     * high; AAPL had six and landed within 0.1. Recording the count lets the read
+     * side filter thin readings instead of trusting every row equally, which is
+     * strictly better than either silently storing a bad number or dropping the
+     * symbol and leaving a hole in its history.
+     */
+    nearStrikeCount: integer('near_strike_count'),
     spot: real('spot').notNull(),
     /** The expiry actually used, which is the one closest to the 30-day target. */
     expiry: date('expiry').notNull(),
