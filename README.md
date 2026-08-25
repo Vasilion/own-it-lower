@@ -6,7 +6,7 @@ Screens large-caps with healthy balance sheets that are trading into technical
 support with elevated implied volatility, then ranks individual put contracts
 against the settings you choose and shows the arithmetic behind the ranking.
 
-**Status:** Engine and screener UI working end to end. No auth or billing yet.
+**Status:** Universe screener, symbol deep-dive and nightly data pipeline all working end to end. No auth or billing yet.
 
 ---
 
@@ -47,8 +47,32 @@ pnpm dev        # then open /put/NVDA
 ```
 
 - `/` — landing page and ticker search
-- `/put/[symbol]` — the screener: stock context, then the ranked chain
+- `/screener` — the whole S&P 500, ranked by setup (reads the nightly scan)
+- `/put/[symbol]` — one symbol: business, trend, then the ranked chain
 - `/api/v1/analyze/[symbol]` — raw analysis payload
+
+### Two stages, on purpose
+
+The nightly scan answers **which businesses are worth looking at today** — quality,
+discount, IV rank. The symbol page answers **which contract**, live against the chain
+and against settings you choose.
+
+They are split because fit depends on settings the user has not chosen yet.
+Precomputing a contract ranking would mean precomputing one for every possible
+preset; precomputing the symbol-level view costs one row per symbol per day. Only
+the first stage is expensive, and only the first stage is cacheable.
+
+### The screener does not sort by yield
+
+Option premium is compensation for risk, so the fattest premium usually belongs to
+the stock the market is most worried about. An early run made the point cleanly:
+NKE had the highest annualised return in the sample at 25.4% and ranked **last** at
+31, because it sits below a falling 200-day average. PG ranked first at 86 on a
+pullback to a rising one, yielding less than half as much.
+
+Names that fail the hard quality floor are **capped, not dropped**. A screener that
+silently removes rows teaches nothing; one that shows a disqualified name sitting
+low with the reason attached teaches what the floor is for.
 
 **Ranking happens in the browser.** The server assembles the ingredients once
 (chain, technicals, risk-free rate) and the client runs `rankPuts` on every
@@ -73,6 +97,7 @@ Two interface rules worth preserving:
 | ---------------------- | ------------------------------------------------------------- |
 | `pnpm check:provider`  | Asserts the options vendor returns genuinely usable data       |
 | `pnpm snapshot:iv`     | Daily ATM IV capture for the universe (`--dry` to skip writes) |
+| `pnpm scan`            | Nightly universe scan → `screener_results` (`--dry` to skip writes) |
 | `pnpm db:push`         | Push the Drizzle schema to Neon                                |
 | `pnpm db:studio`       | Browse the database                                            |
 | `pnpm rank AAPL`       | Rank one chain from the CLI (`--compare` for all three stances) |
