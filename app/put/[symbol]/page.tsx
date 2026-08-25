@@ -52,11 +52,22 @@ function trendTone(trend: TrendState): { bg: string; border: string; text: strin
 export default async function SymbolPage({ params }: Props) {
   const { symbol } = await params
 
-  let data
+  /**
+   * "Does not exist" and "could not be reached" are different answers.
+   *
+   * Treating every failure as a 404 tells the user their ticker is invalid when
+   * the real cause may be a rate limit or a vendor blip — and it is the kind of
+   * wrong answer they cannot diagnose. Only genuinely permanent signals (an
+   * invalid symbol, or the provider reporting no such chain) become notFound();
+   * everything else renders as a temporary problem they can retry.
+   */
+  let data: Awaited<ReturnType<typeof analyzeSymbol>>
   try {
     data = await analyzeSymbol(symbol)
-  } catch {
-    notFound()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (/Invalid symbol|http 40[34]|no expirations/.test(message)) notFound()
+    return <TemporarilyUnavailable symbol={symbol.toUpperCase()} detail={message} />
   }
 
   const t = data.technicals
@@ -216,6 +227,38 @@ export default async function SymbolPage({ params }: Props) {
         <Link href="/" className="underline underline-offset-2">
           Screen another symbol
         </Link>
+      </p>
+    </div>
+  )
+}
+
+function TemporarilyUnavailable({ symbol, detail }: { symbol: string; detail: string }) {
+  const rateLimited = /429/.test(detail)
+
+  return (
+    <div className="mx-auto max-w-2xl px-5 md:px-6 py-16">
+      <h1 className="text-2xl font-semibold tracking-tight mb-2">
+        {symbol} could not be loaded right now
+      </h1>
+      <p className="text-[15px] leading-relaxed mb-6" style={{ color: 'var(--text-muted)' }}>
+        {rateLimited
+          ? 'The market data provider is rate-limiting requests at the moment. This usually clears within a minute or two.'
+          : 'The market data provider did not return a usable response. This is a temporary problem on our side, not a problem with the ticker.'}
+      </p>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Link
+          href={`/put/${symbol}`}
+          className="rounded-lg px-4 py-2 text-sm font-medium"
+          style={{ background: 'var(--accent)', color: 'var(--bg-raised)' }}
+        >
+          Try again
+        </Link>
+        <Link href="/screener" className="text-sm underline underline-offset-2">
+          Back to the screener
+        </Link>
+      </div>
+      <p className="mt-8 text-xs nums" style={{ color: 'var(--text-faint)' }}>
+        {detail}
       </p>
     </div>
   )
