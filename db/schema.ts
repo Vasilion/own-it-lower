@@ -143,6 +143,19 @@ export const screenerResults = pgTable(
     atmIv: real('atm_iv'),
     /** Null until roughly 40 daily observations exist for this symbol. */
     ivRank: real('iv_rank'),
+    /**
+     * How many daily IV observations this symbol has. Surfaced so the UI can say
+     * "building, 12 of 40" rather than leaving a column mysteriously blank for
+     * the first two months of the product's life.
+     */
+    ivObservations: integer('iv_observations'),
+    /** Annualised 30-day realized volatility from close-to-close returns. */
+    hv30: real('hv30'),
+    /**
+     * Implied divided by realized volatility. Answers the question IV Rank cannot
+     * answer yet: are these options priced above how the stock is actually moving?
+     */
+    ivToHv: real('iv_to_hv'),
 
     /** Representative contract: the closest to 30-delta inside 21-49 DTE. */
     bestStrike: real('best_strike'),

@@ -10,6 +10,21 @@ const pct = (v: number | null, d = 1) => (v === null ? '—' : `${(v * 100).toFi
 const money = (v: number | null) => (v === null ? '—' : `$${Math.round(v).toLocaleString()}`)
 const num = (v: number | null) => (v === null ? '—' : String(Math.round(v)))
 
+/**
+ * IV/HV is the one column where a HIGH number is not automatically good.
+ *
+ * Above roughly 1.6 usually means an event is priced in, so the premium is
+ * compensation for a known risk rather than an edge. Amber marks that rather than
+ * green, and the tooltip says why.
+ */
+function ivToHvColor(ratio: number | null): string {
+  if (ratio === null) return 'var(--tier-none)'
+  if (ratio >= 1.6) return 'var(--tier-mid)'
+  if (ratio >= 1.15) return 'var(--tier-high)'
+  if (ratio >= 0.9) return 'var(--text-muted)'
+  return 'var(--tier-low)'
+}
+
 function tierColor(score: number | null): string {
   if (score === null) return 'var(--tier-none)'
   if (score >= 70) return 'var(--tier-high)'
@@ -55,6 +70,8 @@ type SortKey =
   | 'qualityScore'
   | 'discountScore'
   | 'ivRank'
+  | 'atmIv'
+  | 'ivToHv'
   | 'bestAnnualized'
   | 'bestCollateral'
   | 'symbol'
@@ -64,7 +81,9 @@ const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; hint?: stri
   { key: 'symbol', label: 'Symbol' },
   { key: 'qualityScore', label: 'Quality', align: 'right', hint: 'Size, cash flow, balance sheet, growth, profitability' },
   { key: 'discountScore', label: 'Discount', align: 'right', hint: 'How much this looks like quality on sale rather than a breakdown' },
-  { key: 'ivRank', label: 'IV Rank', align: 'right', hint: 'Where implied volatility sits against this stock’s own history' },
+  { key: 'atmIv', label: 'IV', align: 'right', hint: 'At-the-money implied volatility, about 30 days out' },
+  { key: 'ivToHv', label: 'IV/HV', align: 'right', hint: 'Implied divided by realised volatility. Above 1 means options are priced for more movement than the stock has actually delivered.' },
+  { key: 'ivRank', label: 'IV Rank', align: 'right', hint: 'Where IV sits against this stock’s own year of history — needs 40 daily observations before it can be computed' },
   { key: 'bestAnnualized', label: 'Annualised', align: 'right', hint: 'From a representative 30-delta put — an illustration, not a recommendation' },
   { key: 'bestCollateral', label: 'Collateral', align: 'right', hint: 'Cash that representative contract would tie up' },
 ]
@@ -75,6 +94,7 @@ const MOBILE_SORTS: Array<{ key: SortKey; label: string }> = [
   { key: 'bestAnnualized', label: 'Annualised return' },
   { key: 'qualityScore', label: 'Quality' },
   { key: 'discountScore', label: 'Discount' },
+  { key: 'ivToHv', label: 'IV vs realised' },
   { key: 'bestCollateral', label: 'Collateral' },
   { key: 'symbol', label: 'Symbol' },
 ]
@@ -262,7 +282,7 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
 
                   <dl className="grid grid-cols-4 gap-2 mt-3 text-center">
                     <Stat label="Quality" value={num(r.qualityScore)} />
-                    <Stat label="Discount" value={num(r.discountScore)} />
+                    <Stat label="IV/HV" value={r.ivToHv === null ? '—' : r.ivToHv.toFixed(2)} />
                     <Stat label="Annual" value={pct(r.bestAnnualized)} emphasis />
                     <Stat label="Collateral" value={money(r.bestCollateral)} />
                   </dl>
@@ -333,8 +353,24 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
                     </td>
                     <td className="px-3 py-2.5 text-right nums">{num(r.qualityScore)}</td>
                     <td className="px-3 py-2.5 text-right nums">{num(r.discountScore)}</td>
-                    <td className="px-3 py-2.5 text-right nums" style={{ color: 'var(--text-muted)' }}>
-                      {num(r.ivRank)}
+                    <td className="px-3 py-2.5 text-right nums">{pct(r.atmIv, 0)}</td>
+                    <td className="px-3 py-2.5 text-right nums" style={{ color: ivToHvColor(r.ivToHv) }}>
+                      {r.ivToHv === null ? '—' : r.ivToHv.toFixed(2)}
+                    </td>
+                    <td
+                      className="px-3 py-2.5 text-right nums"
+                      style={{ color: 'var(--text-faint)' }}
+                      title={
+                        r.ivRank === null && r.ivObservations !== null
+                          ? `Building — ${r.ivObservations} of 40 daily observations`
+                          : undefined
+                      }
+                    >
+                      {r.ivRank === null
+                        ? r.ivObservations !== null
+                          ? `${r.ivObservations}/40`
+                          : '—'
+                        : num(r.ivRank)}
                     </td>
                     <td className="px-3 py-2.5 text-right nums font-medium">{pct(r.bestAnnualized)}</td>
                     <td className="px-3 py-2.5 text-right nums" style={{ color: 'var(--text-muted)' }}>
@@ -356,7 +392,9 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
       <p className="mt-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
         Annualised and collateral come from a single representative 30-delta put, shown so the row
         carries a concrete number. Open a symbol to rank its whole chain against your own settings.
-        IV Rank stays blank until enough daily history has accumulated for that symbol. A{' '}
+        IV Rank shows its progress (12/40) until enough daily history exists to compute it; IV/HV
+        answers the related question today — above 1 means options are priced for more movement than
+        the stock has actually delivered. A{' '}
         <span style={{ color: 'var(--text-muted)' }}>*</span> marks a setup score resting on partial
         evidence — usually an ETF, which has no balance sheet to score.
       </p>

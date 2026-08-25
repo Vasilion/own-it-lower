@@ -25,6 +25,7 @@ import { getDb } from '../db'
 import { ivSnapshots, screenerResults, snapshotRuns } from '../db/schema'
 import { mapPool } from '../lib/data'
 import { computeIvRank } from '../lib/engine/ivrank'
+import { impliedToRealized, realizedVolatility } from '../lib/engine/realized-vol'
 import { scoreSetup } from '../lib/engine/setup'
 import { analyzeSymbol } from '../lib/server/analyze'
 import { BatchWriter } from './batch-writer'
@@ -45,6 +46,11 @@ function marketDate(d = new Date()): string {
 }
 
 type ScanRow = typeof screenerResults.$inferInsert
+
+/** Closes are not on the payload directly, but the bars carry them. */
+function closesFrom(data: Awaited<ReturnType<typeof analyzeSymbol>>): number[] {
+  return data.bars.map((b) => b.close)
+}
 
 /**
  * Load each symbol's IV history in one query rather than one per symbol.
@@ -80,6 +86,8 @@ async function scanSymbol(symbol: string, today: string, ivHistory: number[]): P
   const currentIv = ivHistory[0] ?? null
   const ivr =
     currentIv !== null ? computeIvRank(currentIv, ivHistory.slice(1)) : null
+
+  const hv30 = realizedVolatility(data.technicals ? closesFrom(data) : [], 30)
 
   const setup = scoreSetup({
     qualityScore: data.quality?.score ?? null,
@@ -144,6 +152,9 @@ async function scanSymbol(symbol: string, today: string, ivHistory: number[]): P
     nextEarnings: f?.nextEarnings ?? null,
     atmIv: currentIv,
     ivRank: ivr?.ivRank ?? null,
+    ivObservations: ivHistory.length,
+    hv30,
+    ivToHv: impliedToRealized(currentIv, hv30),
     ...bestMetrics,
   }
 }
@@ -173,6 +184,9 @@ async function writeBatch(rows: ScanRow[]): Promise<void> {
         nextEarnings: sql`excluded.next_earnings`,
         atmIv: sql`excluded.atm_iv`,
         ivRank: sql`excluded.iv_rank`,
+        ivObservations: sql`excluded.iv_observations`,
+        hv30: sql`excluded.hv30`,
+        ivToHv: sql`excluded.iv_to_hv`,
         bestStrike: sql`excluded.best_strike`,
         bestExpiry: sql`excluded.best_expiry`,
         bestDte: sql`excluded.best_dte`,
