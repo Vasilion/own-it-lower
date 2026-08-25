@@ -38,12 +38,17 @@ const BASE = 'https://cdn.cboe.com/api/global/delayed_quotes/options'
 const RATE_PER_MINUTE = 50
 
 /**
- * Payloads are ~1.5MB each, so caching many symbols would be a memory problem.
- * A handful is enough: listExpirations() and getChain() are called back to back
- * for one symbol, and this collapses that pair into a single network request.
+ * Raw payloads are ~1.5MB but we cache the PARSED form, which is far smaller, so a
+ * few dozen symbols is affordable. Sized for someone browsing the screener and
+ * clicking between names rather than for a single-symbol job -- at 8 entries the
+ * cache evicted faster than a user could click, and every page load paid full
+ * network cost again.
+ *
+ * TTL matches the 15-minute delay on the data itself: serving anything fresher is
+ * impossible, so caching that long is lossless.
  */
-const CACHE_MAX_ENTRIES = 8
-const CACHE_TTL_MS = 5 * 60 * 1000
+const CACHE_MAX_ENTRIES = 60
+const CACHE_TTL_MS = 15 * 60 * 1000
 
 /** OCC contract symbol: root, YYMMDD, C or P, then strike x 1000 as 8 digits. */
 const OCC = /^([A-Z0-9]{1,6})(\d{6})([CP])(\d{8})$/
@@ -112,9 +117,12 @@ export class CboeProvider implements OptionsProvider {
 
   private readonly limiter = new RateLimiter(RATE_PER_MINUTE)
   private readonly cache = new Map<string, ParsedChain>()
+  /** In-flight requests, so concurrent callers for one symbol share a single fetch. */
+  private readonly inFlight = new Map<string, Promise<ParsedChain>>()
 
   private async load(symbol: string): Promise<ParsedChain> {
     const key = symbol.toUpperCase()
+
     const hit = this.cache.get(key)
     if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) {
       // Refresh LRU position.
@@ -123,15 +131,28 @@ export class CboeProvider implements OptionsProvider {
       return hit
     }
 
-    const parsed = await this.fetchAndParse(key)
+    // Without this, a page that calls listExpirations() and getChain() -- or two
+    // visitors landing on the same symbol at once -- each start their own 1.5MB
+    // download and each consume a rate-limit slot for identical data.
+    const pending = this.inFlight.get(key)
+    if (pending) return pending
 
-    this.cache.set(key, parsed)
-    while (this.cache.size > CACHE_MAX_ENTRIES) {
-      const oldest = this.cache.keys().next().value
-      if (oldest === undefined) break
-      this.cache.delete(oldest)
-    }
-    return parsed
+    const request = this.fetchAndParse(key)
+      .then((parsed) => {
+        this.cache.set(key, parsed)
+        while (this.cache.size > CACHE_MAX_ENTRIES) {
+          const oldest = this.cache.keys().next().value
+          if (oldest === undefined) break
+          this.cache.delete(oldest)
+        }
+        return parsed
+      })
+      .finally(() => {
+        this.inFlight.delete(key)
+      })
+
+    this.inFlight.set(key, request)
+    return request
   }
 
   private async fetchAndParse(symbol: string): Promise<ParsedChain> {

@@ -60,6 +60,14 @@ export async function withRetry<T>(
   throw lastError
 }
 
+/** Thrown when a caller declined to queue behind a rate limit. */
+export class RateLimitedError extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super(`rate limited, retry in about ${retryAfterSeconds}s`)
+    this.name = 'RateLimitedError'
+  }
+}
+
 /**
  * Adaptive request pacer shared by every caller of one provider.
  *
@@ -84,19 +92,33 @@ export class RateLimiter {
     this.intervalMs = this.baseIntervalMs
   }
 
-  /** Resolves when the caller may issue its request. */
-  async acquire(): Promise<void> {
+  /**
+   * Resolves when the caller may issue its request.
+   *
+   * `maxWaitMs` bounds how long the caller is willing to queue. Batch jobs should
+   * omit it and wait their turn; anything serving a page request should set it,
+   * because a user staring at a blank tab for two minutes is worse than an honest
+   * "try again" — and that is exactly what an unbounded 429 cooldown produces.
+   */
+  async acquire(maxWaitMs?: number): Promise<void> {
     for (;;) {
       const now = Date.now()
       // A cooldown from a 429 outranks the normal schedule; re-check after waiting
       // because another worker may have extended it meanwhile.
       if (now < this.cooldownUntil) {
-        await sleep(this.cooldownUntil - now)
+        const wait = this.cooldownUntil - now
+        if (maxWaitMs !== undefined && wait > maxWaitMs) {
+          throw new RateLimitedError(Math.ceil(wait / 1000))
+        }
+        await sleep(wait)
         continue
       }
       const slot = Math.max(now, this.nextSlot)
-      this.nextSlot = slot + this.intervalMs
       const wait = slot - now
+      if (maxWaitMs !== undefined && wait > maxWaitMs) {
+        throw new RateLimitedError(Math.ceil(wait / 1000))
+      }
+      this.nextSlot = slot + this.intervalMs
       if (wait > 0) await sleep(wait)
       return
     }

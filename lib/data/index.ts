@@ -26,7 +26,34 @@ function env(name: string): string | undefined {
  * returns usable implied volatility, and defaulting to it would produce a
  * database full of confident-looking zeros.
  */
+/**
+ * Memoised so every caller shares ONE provider instance.
+ *
+ * This used to construct a new provider per call, which quietly defeated both of
+ * the mechanisms that make the data layer work: the chain cache started empty on
+ * every request, and the rate limiter had no memory of requests already in flight,
+ * so nothing was actually paced. Concurrent page loads sailed straight past CBOE's
+ * limit and drew 429s, whose backoff then made pages hang for up to two minutes.
+ *
+ * Keyed by configuration so switching provider via env still takes effect.
+ */
+let cachedProvider: { key: string; provider: OptionsProvider } | null = null
+
 export function getOptionsProvider(): OptionsProvider {
+  const key = [
+    env('OPTIONS_PROVIDER') ?? '',
+    env('TRADIER_ACCESS_TOKEN') ? 'tok' : '',
+    env('TRADIER_MODE') ?? '',
+  ].join('|')
+
+  if (cachedProvider?.key === key) return cachedProvider.provider
+
+  const provider = buildProvider()
+  cachedProvider = { key, provider }
+  return provider
+}
+
+function buildProvider(): OptionsProvider {
   const explicit = env('OPTIONS_PROVIDER')?.toLowerCase()
   const tradierToken = env('TRADIER_ACCESS_TOKEN')
   const tradierMode = env('TRADIER_MODE') === 'production' ? 'production' : 'sandbox'

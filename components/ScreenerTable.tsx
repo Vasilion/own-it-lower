@@ -175,7 +175,12 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
                     </span>
                   </td>
                   <td className="px-3 py-2.5">
-                    <Link href={`/put/${r.symbol}`} className="font-medium hover:underline underline-offset-2">
+                    {/* prefetch on hover: the chain fetch starts before the click lands */}
+                    <Link
+                      href={`/put/${r.symbol}`}
+                      prefetch
+                      className="font-medium hover:underline underline-offset-2"
+                    >
                       {r.symbol}
                     </Link>
                     {r.qualityFailures && (
