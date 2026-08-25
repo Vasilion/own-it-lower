@@ -75,10 +75,14 @@ export function explainContract(
     parts.push(`${assigned}.`)
   }
 
-  if (m.contractsAffordable > 1) {
+  if (preset.capital > 0 && m.contractsAffordable > 1) {
     parts.push(
       `The ${pct(preset.maxPositionPct, 0)} position cap allows ${m.contractsAffordable} contracts.`,
     )
+  }
+
+  if (m.impliedVolatility) {
+    parts.push(`Implied volatility on this contract is ${pct(m.impliedVolatility)}.`)
   }
 
   // -- Flags. Stated as conditions, not as verdicts.

@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from 'react'
 
 import { explainContract } from '@/lib/engine/explain'
-import { rankPuts, tallyExclusions } from '@/lib/engine/fit'
+import { rankPuts, soleBlockers, tallyExclusions } from '@/lib/engine/fit'
 import { makePreset, type AssignmentStance, type StrategyPreset } from '@/lib/engine/types'
 import type { AnalysisPayload } from '@/lib/server/analyze'
 
@@ -43,6 +43,7 @@ type SortKey =
   | 'effectiveCostBasis'
   | 'openInterest'
   | 'spreadPct'
+  | 'impliedVolatility'
 
 const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; hint?: string }> = [
   { key: 'fitScore', label: 'Fit', hint: 'How closely this contract matches the settings you chose' },
@@ -53,6 +54,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; hint?: stri
   { key: 'annualizedReturn', label: 'Annualised', align: 'right', hint: 'Return on collateral if it expires worthless, scaled to a year' },
   { key: 'downsideBuffer', label: 'Buffer', align: 'right', hint: 'How far the stock can fall before break-even' },
   { key: 'effectiveCostBasis', label: 'If assigned', align: 'right', hint: 'Your cost per share if the shares are put to you' },
+  { key: 'impliedVolatility', label: 'IV', align: 'right', hint: 'Implied volatility on this contract — what inflates the premium' },
   { key: 'openInterest', label: 'OI', align: 'right' },
   { key: 'spreadPct', label: 'Spread', align: 'right' },
 ]
@@ -62,17 +64,22 @@ const MOBILE_SORTS: Array<{ key: SortKey; label: string }> = [
   { key: 'annualizedReturn', label: 'Annualised return' },
   { key: 'downsideBuffer', label: 'Downside buffer' },
   { key: 'delta', label: 'Delta' },
+  { key: 'impliedVolatility', label: 'Implied volatility' },
   { key: 'strike', label: 'Strike' },
   { key: 'dte', label: 'Days to expiry' },
 ]
 
 export default function Screen({ data }: { data: AnalysisPayload }) {
   const [stance, setStance] = useState<AssignmentStance>('neutral')
-  const [capital, setCapital] = useState(25_000)
+  // 0 means "no limit". A default figure here previously excluded every contract
+  // on any stock above roughly $125, so most symbols opened on an empty screen.
+  const [capital, setCapital] = useState(0)
   const [maxPositionPct, setMaxPositionPct] = useState(0.5)
   const [minDte, setMinDte] = useState(21)
   const [maxDte, setMaxDte] = useState(49)
-  const [avoidEarnings, setAvoidEarnings] = useState(true)
+  const [avoidEarnings, setAvoidEarnings] = useState(false)
+  const [minIv, setMinIv] = useState(0)
+  const [maxIv, setMaxIv] = useState(0)
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fitScore', dir: 'desc' })
   const [expanded, setExpanded] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -86,14 +93,16 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
         minDte,
         maxDte,
         earningsPolicy: avoidEarnings ? 'avoid' : 'allow',
+        minIv: minIv / 100,
+        maxIv: maxIv / 100,
       }),
-    [capital, maxPositionPct, stance, minDte, maxDte, avoidEarnings],
+    [capital, maxPositionPct, stance, minDte, maxDte, avoidEarnings, minIv, maxIv],
   )
 
   // Ranking runs in the browser. The engine is pure TypeScript with no network or
   // framework dependency, so every settings change re-ranks instantly rather than
   // costing a server round trip.
-  const { ranked, excluded, capitalShortfall } = useMemo(() => {
+  const { ranked, excluded, blockers } = useMemo(() => {
     const all = rankPuts({
       symbol: data.symbol,
       puts: data.puts,
@@ -104,32 +113,35 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
       includeExcluded: true,
     })
 
-    // A first-failure tally can bury the real blocker. On an expensive stock most
-    // contracts trip the delta gate first, so "delta above range" tops the list
-    // while position size is what actually makes the symbol unusable at this
-    // account size. Detect that case specifically and offer the fix.
-    const capitalOnly = all.filter(
-      (r) => r.exclusions.length > 0 && r.exclusions.every((e) => e.includes('collateral')),
-    )
+    // A first-failure tally buries the actionable answer, so also find the
+    // contracts blocked by exactly one setting the user can flip.
+    const blockers = soleBlockers(all)
 
     return {
       ranked: all.filter((r) => r.exclusions.length === 0),
       excluded: tallyExclusions(all),
-      capitalShortfall:
-        capitalOnly.length > 0
-          ? {
-              count: capitalOnly.length,
-              cheapest: Math.min(...capitalOnly.map((r) => r.metrics.collateral)),
-            }
-          : null,
+      blockers: {
+        capitalCount: blockers.capital.length,
+        cheapestCollateral: blockers.capital.length
+          ? Math.min(...blockers.capital.map((r) => r.metrics.collateral))
+          : 0,
+        earnings: blockers.earnings,
+        iv: blockers.iv,
+      },
     }
   }, [data, preset])
 
   const sorted = useMemo(() => {
     const rows = [...ranked]
     rows.sort((a, b) => {
-      const av = sort.key === 'fitScore' ? a.fitScore : (a.metrics[sort.key] as number)
-      const bv = sort.key === 'fitScore' ? b.fitScore : (b.metrics[sort.key] as number)
+      const pick = (r: (typeof rows)[number]) =>
+        sort.key === 'fitScore' ? r.fitScore : (r.metrics[sort.key] as number | null)
+      const av = pick(a)
+      const bv = pick(b)
+      // IV can be null; a missing value is not a low one, so it sorts last either way.
+      if (av === null && bv === null) return 0
+      if (av === null) return 1
+      if (bv === null) return -1
       return sort.dir === 'desc' ? bv - av : av - bv
     })
     return rows
@@ -157,7 +169,9 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
           <span>
             <span className="font-medium">{activeStance.title}</span>
             <span className="nums ml-2" style={{ color: 'var(--text-faint)' }}>
-              {preset.minDelta.toFixed(2)}–{preset.maxDelta.toFixed(2)}Δ · {money(capital)}
+              {preset.minDelta.toFixed(2)}–{preset.maxDelta.toFixed(2)}Δ
+              {capital > 0 ? ` · ${money(capital)}` : ''}
+              {minIv > 0 || maxIv > 0 ? ` · IV ${minIv || 0}-${maxIv || '∞'}%` : ''}
             </span>
           </span>
           <span style={{ color: 'var(--text-faint)' }}>{settingsOpen ? '▲' : 'Edit ▼'}</span>
@@ -195,34 +209,75 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
 
           <label className="block mb-4">
             <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-              Capital available
+              Capital available <span style={{ color: 'var(--text-faint)' }}>— optional</span>
             </span>
             <input
               type="number"
-              value={capital}
-              min={1000}
+              value={capital || ''}
+              placeholder="No limit"
+              min={0}
               step={1000}
               inputMode="numeric"
-              onChange={(e) => setCapital(Math.max(1000, Number(e.target.value) || 0))}
+              onChange={(e) => setCapital(Math.max(0, Number(e.target.value) || 0))}
               className="mt-1 w-full rounded-lg border px-3 py-2 text-sm nums bg-transparent"
               style={{ borderColor: 'var(--border)' }}
             />
+            <span className="text-[11px] mt-1 block" style={{ color: 'var(--text-faint)' }}>
+              Leave blank to see every contract regardless of collateral.
+            </span>
           </label>
 
-          <label className="block mb-4">
+          {capital > 0 && (
+            <label className="block mb-4">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                Max per position — {pct(maxPositionPct, 0)} ({money(capital * maxPositionPct)})
+              </span>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={maxPositionPct * 100}
+                onChange={(e) => setMaxPositionPct(Number(e.target.value) / 100)}
+                className="mt-2 w-full"
+              />
+            </label>
+          )}
+
+          <div className="mb-4">
             <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-              Max per position — {pct(maxPositionPct, 0)} ({money(capital * maxPositionPct)})
+              Implied volatility <span style={{ color: 'var(--text-faint)' }}>— optional, %</span>
             </span>
-            <input
-              type="range"
-              min={10}
-              max={100}
-              step={5}
-              value={maxPositionPct * 100}
-              onChange={(e) => setMaxPositionPct(Number(e.target.value) / 100)}
-              className="mt-2 w-full"
-            />
-          </label>
+            <div className="flex gap-2 mt-1 items-center">
+              <input
+                type="number"
+                value={minIv || ''}
+                placeholder="min"
+                min={0}
+                max={500}
+                inputMode="numeric"
+                onChange={(e) => setMinIv(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full rounded-lg border px-3 py-2 text-sm nums bg-transparent"
+                style={{ borderColor: 'var(--border)' }}
+              />
+              <span style={{ color: 'var(--text-faint)' }}>–</span>
+              <input
+                type="number"
+                value={maxIv || ''}
+                placeholder="max"
+                min={0}
+                max={500}
+                inputMode="numeric"
+                onChange={(e) => setMaxIv(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full rounded-lg border px-3 py-2 text-sm nums bg-transparent"
+                style={{ borderColor: 'var(--border)' }}
+              />
+            </div>
+            <span className="text-[11px] mt-1 block" style={{ color: 'var(--text-faint)' }}>
+              A ceiling matters as much as a floor — IV far above normal usually
+              means an event is priced in.
+            </span>
+          </div>
 
           <div className="mb-4">
             <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
@@ -304,8 +359,13 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
           <EmptyState
             excluded={excluded}
             preset={preset}
-            capitalShortfall={capitalShortfall}
-            onRaiseCapital={(amount) => setCapital(amount)}
+            blockers={blockers}
+            onRaiseCapital={setCapital}
+            onAllowEarnings={() => setAvoidEarnings(false)}
+            onClearIv={() => {
+              setMinIv(0)
+              setMaxIv(0)
+            }}
           />
         ) : (
           <>
@@ -328,6 +388,7 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
                           <div className="font-semibold text-[15px] nums">{usd(m.strike)} put</div>
                           <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-faint)' }}>
                             {m.expiry} · {m.dte}d · {m.delta.toFixed(2)}Δ
+                            {m.impliedVolatility !== null ? ` · ${pct(m.impliedVolatility, 0)} IV` : ''}
                             {m.earningsBeforeExpiry ? ' · earnings' : ''}
                           </div>
                         </div>
@@ -430,6 +491,9 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
                           </td>
                           <td className="px-3 py-2.5 text-right nums">{pct(m.downsideBuffer)}</td>
                           <td className="px-3 py-2.5 text-right nums">{usd(m.effectiveCostBasis)}</td>
+                          <td className="px-3 py-2.5 text-right nums">
+                            {m.impliedVolatility === null ? '—' : pct(m.impliedVolatility, 0)}
+                          </td>
                           <td className="px-3 py-2.5 text-right nums" style={{ color: 'var(--text-muted)' }}>
                             {m.openInterest.toLocaleString()}
                           </td>
@@ -530,18 +594,24 @@ function Breakdown({
 function EmptyState({
   excluded,
   preset,
-  capitalShortfall,
+  blockers,
   onRaiseCapital,
+  onAllowEarnings,
+  onClearIv,
 }: {
   excluded: Array<{ reason: string; count: number }>
   preset: StrategyPreset
-  capitalShortfall: { count: number; cheapest: number } | null
+  blockers: { capitalCount: number; cheapestCollateral: number; earnings: number; iv: number }
   onRaiseCapital: (amount: number) => void
+  onAllowEarnings: () => void
+  onClearIv: () => void
 }) {
   // Round up to a tidy figure so the button does not offer "$38,110".
-  const needed = capitalShortfall
-    ? Math.ceil(capitalShortfall.cheapest / preset.maxPositionPct / 1000) * 1000
+  const needed = blockers.cheapestCollateral
+    ? Math.ceil(blockers.cheapestCollateral / preset.maxPositionPct / 1000) * 1000
     : 0
+
+  const hasFix = blockers.capitalCount > 0 || blockers.earnings > 0 || blockers.iv > 0
 
   return (
     <div className="card p-5 sm:p-6">
@@ -560,35 +630,66 @@ function EmptyState({
         ))}
       </ul>
 
-      {capitalShortfall && (
+      {/*
+        The list above credits each contract's FIRST failure, which reliably buries
+        the useful answer. What the user needs is the contracts that are one
+        setting away, and a way to flip that setting.
+      */}
+      {hasFix && (
         <div
-          className="mt-5 rounded-lg border px-4 py-3"
+          className="mt-5 rounded-lg border p-4 space-y-3"
           style={{ background: 'var(--bg-sunken)', borderColor: 'var(--border)' }}
         >
-          <p className="text-[13px] leading-relaxed">
-            <span className="font-medium">
-              {capitalShortfall.count}{' '}
-              {capitalShortfall.count === 1 ? 'contract fits' : 'contracts fit'} every setting except
-              position size.
-            </span>{' '}
-            The cheapest ties up {money(capitalShortfall.cheapest)}, which at a{' '}
-            {pct(preset.maxPositionPct, 0)} cap needs about {money(needed)} of capital.
+          <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
+            One setting away
           </p>
-          <button
-            onClick={() => onRaiseCapital(needed)}
-            className="mt-3 w-full sm:w-auto rounded-lg px-4 py-2 text-[13px] font-medium"
-            style={{ background: 'var(--accent)', color: '#050507' }}
-          >
-            Set capital to {money(needed)}
-          </button>
+
+          {blockers.capitalCount > 0 && (
+            <Fix
+              text={`${blockers.capitalCount} ${blockers.capitalCount === 1 ? 'contract fits' : 'contracts fit'} everything except position size. The cheapest ties up ${money(blockers.cheapestCollateral)}, needing about ${money(needed)} of capital at a ${pct(preset.maxPositionPct, 0)} cap.`}
+              action={`Set capital to ${money(needed)}`}
+              onClick={() => onRaiseCapital(needed)}
+            />
+          )}
+
+          {blockers.earnings > 0 && (
+            <Fix
+              text={`${blockers.earnings} ${blockers.earnings === 1 ? 'contract expires' : 'contracts expire'} after this company reports earnings, and your settings exclude those.`}
+              action="Allow expiries after earnings"
+              onClick={onAllowEarnings}
+            />
+          )}
+
+          {blockers.iv > 0 && (
+            <Fix
+              text={`${blockers.iv} ${blockers.iv === 1 ? 'contract falls' : 'contracts fall'} outside your implied volatility band.`}
+              action="Clear the IV filter"
+              onClick={onClearIv}
+            />
+          )}
         </div>
       )}
 
       <p className="mt-4 text-xs leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-        Your current delta band is {preset.minDelta.toFixed(2)}–{preset.maxDelta.toFixed(2)} and the
-        per-position cap is {money(preset.capital * preset.maxPositionPct)}. Widening either usually
-        opens things up.
+        Your delta band for this stance is {preset.minDelta.toFixed(2)}–{preset.maxDelta.toFixed(2)}
+        {preset.capital > 0 ? ` and the per-position cap is ${money(preset.capital * preset.maxPositionPct)}` : ''}.
+        Switching stance widens the delta band.
       </p>
+    </div>
+  )
+}
+
+function Fix({ text, action, onClick }: { text: string; action: string; onClick: () => void }) {
+  return (
+    <div>
+      <p className="text-[13px] leading-relaxed">{text}</p>
+      <button
+        onClick={onClick}
+        className="mt-2 w-full sm:w-auto rounded-lg px-4 py-2 text-[13px] font-medium"
+        style={{ background: 'var(--accent)', color: '#050507' }}
+      >
+        {action}
+      </button>
     </div>
   )
 }

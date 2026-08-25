@@ -25,7 +25,15 @@ export type AssignmentStance = 'want' | 'neutral' | 'avoid'
  * exemption, and it costs nothing in usability.
  */
 export interface StrategyPreset {
-  /** Cash available to secure puts, in dollars. */
+  /**
+   * Cash available to secure puts, in dollars. ZERO MEANS NO LIMIT.
+   *
+   * Defaulting this to a number was a mistake: any figure low enough to suit a
+   * small account silently excluded every contract on a $300 stock, so landing on
+   * AVGO or COST produced an empty screen before the user had chosen anything.
+   * A filter the user did not ask for should not be the reason they see nothing.
+   * Capital is now opt-in, and gates only once it is set.
+   */
   capital: number
   /** Ceiling on how much of that capital one position may tie up (0-1). */
   maxPositionPct: number
@@ -39,8 +47,36 @@ export interface StrategyPreset {
   minDte: number
   maxDte: number
 
-  /** Whether a contract whose expiry straddles an earnings date is acceptable. */
+  /**
+   * Whether a contract whose expiry straddles an earnings date is acceptable.
+   *
+   * Defaults to 'allow'. Excluding by default sounds prudent, but roughly a third
+   * of companies report inside any 30-day window, so it silently emptied the
+   * screen for a large slice of the universe -- AVGO, the highest-scoring name in
+   * the whole scan, returned nothing at all despite contracts with 14,799 open
+   * interest and 5% spreads.
+   *
+   * Showing them flagged and scored down beats hiding them. That is the same call
+   * made for names below the quality floor: a screener that silently removes rows
+   * teaches nothing, while one that shows them marked teaches what the flag means.
+   */
   earningsPolicy: 'allow' | 'avoid'
+
+  /**
+   * Implied volatility band for the contract itself, as decimals. Zero disables
+   * that side of the band.
+   *
+   * Elevated IV is half the thesis -- it is what makes the premium worth
+   * collecting and the effective entry price lower. The ceiling matters just as
+   * much as the floor: IV far above a name's normal range usually means the
+   * market has priced in an event, and the extra premium is compensation for a
+   * risk rather than a gift.
+   *
+   * This is absolute IV, not IV Rank. Rank is the better measure but needs a year
+   * of that symbol's own history, which we are still accumulating.
+   */
+  minIv: number
+  maxIv: number
 
   /** Hard liquidity floors -- a great-looking contract nobody trades is unusable. */
   minOpenInterest: number
@@ -71,7 +107,9 @@ export function makePreset(input: Partial<StrategyPreset> = {}): StrategyPreset 
 
   // Explicit user input always wins over the stance-derived default.
   return {
-    capital: input.capital ?? 25_000,
+    // 0 = no limit. See the field docs: a default capital figure turned an
+    // unasked-for filter into the reason most symbols showed nothing.
+    capital: input.capital ?? 0,
     // Cash-secured put sellers typically run two or three positions, not ten, so
     // half the account in one name is normal rather than reckless. An earlier 0.34
     // default rejected a 0.34-delta KO put with 2,805 open interest purely because
@@ -82,10 +120,12 @@ export function makePreset(input: Partial<StrategyPreset> = {}): StrategyPreset 
     maxDelta: input.maxDelta ?? deltaDefaults.maxDelta,
     minDte: input.minDte ?? 21,
     maxDte: input.maxDte ?? 49,
-    earningsPolicy: input.earningsPolicy ?? 'avoid',
+    earningsPolicy: input.earningsPolicy ?? 'allow',
     minOpenInterest: input.minOpenInterest ?? 25,
     maxSpreadPct: input.maxSpreadPct ?? 0.12,
     maxSpreadAbs: input.maxSpreadAbs ?? 0.1,
+    minIv: input.minIv ?? 0,
+    maxIv: input.maxIv ?? 0,
   }
 }
 
@@ -129,6 +169,8 @@ export interface ContractMetrics {
   /** (spot - breakeven) / spot: how far the stock can fall before it hurts. */
   downsideBuffer: number
 
+  /** Contract implied volatility as a decimal (0.28 = 28%). */
+  impliedVolatility: number | null
   /** Absolute delta, 0-1. */
   delta: number
   /** Risk-neutral probability of expiring out of the money. */
@@ -140,7 +182,10 @@ export interface ContractMetrics {
   openInterest: number
   volume: number
 
-  /** How many contracts the preset's capital and position cap actually allow. */
+  /**
+   * Contracts the preset's capital and position cap allow. Zero when capital is
+   * unset, which means "not constrained" rather than "cannot afford any".
+   */
   contractsAffordable: number
   earningsBeforeExpiry: boolean | null
 }

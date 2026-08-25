@@ -55,7 +55,8 @@ function printTable(
 async function main() {
   const symbol = (process.argv.slice(2).find((a) => !a.startsWith('--')) ?? 'AAPL').toUpperCase()
   const compare = process.argv.includes('--compare')
-  const capital = Number(arg('capital') ?? 25_000)
+  // 0 = no limit, matching the web default. Pass --capital to constrain.
+  const capital = Number(arg('capital') ?? 0)
   const stance = (arg('stance') ?? 'neutral') as AssignmentStance
 
   // Uses exactly the same code path as the web app, so a discrepancy between
@@ -99,7 +100,7 @@ async function main() {
 
     console.log(
       `── stance: ${s.toUpperCase()}  (delta ${preset.minDelta}-${preset.maxDelta}, ` +
-        `capital $${capital.toLocaleString()})  →  ${ranked.length} qualify`,
+        `capital ${capital > 0 ? `$${capital.toLocaleString()}` : 'unlimited'})  →  ${ranked.length} qualify`,
     )
 
     if (ranked.length === 0) {

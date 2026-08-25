@@ -93,8 +93,9 @@ export function measureContract(
   const deltaSource: 'provider' | 'computed' = quote.delta != null ? 'provider' : 'computed'
   if (!(delta > 0)) return null
 
-  const budget = preset.capital * preset.maxPositionPct
-  const contractsAffordable = Math.floor(budget / collateral)
+  // Capital of 0 means the user has not set a limit, so nothing is constrained.
+  const contractsAffordable =
+    preset.capital > 0 ? Math.floor((preset.capital * preset.maxPositionPct) / collateral) : 0
 
   let earningsBeforeExpiry: boolean | null = null
   if (ctx.nextEarnings) {
@@ -121,6 +122,7 @@ export function measureContract(
     delta,
     probOtm: greeks?.probOtm ?? 1 - delta,
     deltaSource,
+    impliedVolatility: iv ?? null,
     spreadPct,
     openInterest,
     volume,
@@ -148,8 +150,15 @@ export function gateContract(m: ContractMetrics, preset: StrategyPreset): string
   if (m.spreadPct > preset.maxSpreadPct && spreadAbs > preset.maxSpreadAbs) {
     out.push(`spread ${pct(m.spreadPct)} (${usd(spreadAbs)}) wider than ${pct(preset.maxSpreadPct)} / ${usd(preset.maxSpreadAbs)}`)
   }
-  if (m.contractsAffordable < 1) {
+  // Only gate on position size once the user has actually declared their capital.
+  if (preset.capital > 0 && m.contractsAffordable < 1) {
     out.push(`needs ${usd(m.collateral)} collateral, over the per-position cap`)
+  }
+  if (preset.minIv > 0 && (m.impliedVolatility ?? 0) < preset.minIv) {
+    out.push(`IV ${pct(m.impliedVolatility ?? 0)} below ${pct(preset.minIv)}`)
+  }
+  if (preset.maxIv > 0 && (m.impliedVolatility ?? 0) > preset.maxIv) {
+    out.push(`IV ${pct(m.impliedVolatility ?? 0)} above ${pct(preset.maxIv)}`)
   }
   if (preset.earningsPolicy === 'avoid' && m.earningsBeforeExpiry === true) {
     out.push('earnings falls before expiry')
@@ -306,6 +315,35 @@ export function rankPuts(opts: RankOptions): FitResult[] {
 }
 
 /**
+ * Contracts blocked by exactly ONE setting, grouped by which one.
+ *
+ * The plain tally credits only a contract's first failure, which buries the
+ * actionable answer: on an expensive stock "delta above range" tops the list while
+ * the real blocker is a single toggle the user never chose. Contracts one setting
+ * away are the ones worth telling them about, because flipping that setting turns
+ * an empty screen into results.
+ */
+export function soleBlockers(results: FitResult[]): {
+  capital: FitResult[]
+  earnings: number
+  iv: number
+} {
+  const capital: FitResult[] = []
+  let earnings = 0
+  let iv = 0
+
+  for (const r of results) {
+    if (r.exclusions.length !== 1) continue
+    const reason = r.exclusions[0]
+    if (reason.includes('collateral')) capital.push(r)
+    else if (reason.includes('earnings')) earnings++
+    else if (reason.startsWith('IV ')) iv++
+  }
+
+  return { capital, earnings, iv }
+}
+
+/**
  * Why contracts were excluded, tallied by cause.
  *
  * "No results" is the worst possible answer for a screener to give in silence --
@@ -331,6 +369,8 @@ export function tallyExclusions(results: FitResult[]): Array<{ reason: string; c
       .replace(/open interest \d+ below \d+/, 'open interest too low')
       .replace(/spread [\d.]+% \(\$[\d.]+\) wider than .+/, 'spread too wide')
       .replace(/needs \$[\d,.]+ collateral, over the per-position cap/, 'position size over cap')
+      .replace(/IV [\d.]+% below [\d.]+%/, 'IV below your floor')
+      .replace(/IV [\d.]+% above [\d.]+%/, 'IV above your ceiling')
     counts.set(reason, (counts.get(reason) ?? 0) + 1)
   }
 
