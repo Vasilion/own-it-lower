@@ -1,79 +1,52 @@
 @import 'tailwindcss';
 
 /*
- * Own It Lower — plain-spoken, precise, anti-hype.
+ * Own It Lower — visually aligned with Leaving The Matrix.
  *
- * The visual language is a measuring instrument, not a trading floor: restrained
- * neutrals, one accent, and colour used only where it carries information. Green
- * never means "buy" here -- it means a number sits high in its range -- which is
- * both the honest design choice and the compliant one.
+ * Shares LTM's palette (bone on ink, mint "signal" accent), its type stack
+ * (Anton display / Inter UI / JetBrains Mono for figures), and its dark-only
+ * posture. Separate product, same house style.
+ *
+ * Dark-only is a deliberate brand choice inherited from LTM, not an oversight —
+ * hence the explicit color-scheme rather than a prefers-color-scheme pair.
  */
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+  --font-sans: var(--font-inter), Inter, system-ui, sans-serif;
+  --font-display: var(--font-anton), Anton, 'Bebas Neue', Impact, sans-serif;
+  --font-mono: var(--font-mono-jb), 'JetBrains Mono', ui-monospace, monospace;
 }
 
 :root {
-  --bg: #fbfbfa;
-  --bg-raised: #ffffff;
-  --bg-sunken: #f4f4f2;
-  --border: #e4e4e1;
-  --border-strong: #d3d3cf;
-  --text: #1b1b19;
-  --text-muted: #6b6b66;
-  --text-faint: #97978f;
-  --accent: #0f766e;
-  --accent-soft: #ccfbf1;
-  --tier-high: #15803d;
-  --tier-mid: #a16207;
-  --tier-low: #9a3412;
-  --tier-none: #6b6b66;
-  --warn-bg: #fef6e7;
-  --warn-border: #f0d9a8;
-  --warn-text: #7c5a12;
-}
+  color-scheme: dark;
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #131314;
-    --bg-raised: #1b1b1d;
-    --bg-sunken: #0e0e0f;
-    --border: #2c2c2f;
-    --border-strong: #3d3d41;
-    --text: #ededea;
-    --text-muted: #9d9d97;
-    --text-faint: #6e6e69;
-    --accent: #2dd4bf;
-    --accent-soft: #134e4a;
-    --tier-high: #4ade80;
-    --tier-mid: #fbbf24;
-    --tier-low: #fb923c;
-    --tier-none: #9d9d97;
-    --warn-bg: #2a2113;
-    --warn-border: #4a3a1c;
-    --warn-text: #e8c88a;
-  }
-}
+  /* ink — backgrounds */
+  --bg: #050507;
+  --bg-raised: #0f0f14;
+  --bg-sunken: #000000;
 
-:root[data-theme='dark'] {
-  --bg: #131314;
-  --bg-raised: #1b1b1d;
-  --bg-sunken: #0e0e0f;
-  --border: #2c2c2f;
-  --border-strong: #3d3d41;
-  --text: #ededea;
-  --text-muted: #9d9d97;
-  --text-faint: #6e6e69;
-  --accent: #2dd4bf;
-  --accent-soft: #134e4a;
-  --tier-high: #4ade80;
-  --tier-mid: #fbbf24;
-  --tier-low: #fb923c;
-  --tier-none: #9d9d97;
-  --warn-bg: #2a2113;
-  --warn-border: #4a3a1c;
-  --warn-text: #e8c88a;
+  /* bone — foregrounds */
+  --text: #f5f5f0;
+  --text-muted: #c8c8c0;
+  --text-faint: #7a7a78;
+
+  --border: rgba(245, 245, 240, 0.1);
+  --border-strong: rgba(245, 245, 240, 0.22);
+
+  /* signal — the LTM accent */
+  --accent: #00ffc6;
+  --accent-dim: #00b88f;
+  --accent-soft: rgba(0, 255, 198, 0.12);
+
+  /* Score tiers, drawn from the LTM semantic set. */
+  --tier-high: #00ffc6;
+  --tier-mid: #ffb547;
+  --tier-low: #ff5470;
+  --tier-none: #7a7a78;
+
+  --warn-bg: rgba(255, 181, 71, 0.08);
+  --warn-border: rgba(255, 181, 71, 0.3);
+  --warn-text: #ffb547;
 }
 
 body {
@@ -81,9 +54,44 @@ body {
   color: var(--text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  overflow-x: hidden;
 }
 
-/* Tabular figures everywhere numbers are compared down a column. */
+/*
+ * Anton is a single-weight (400) display face. Browser default-bold triggers
+ * faux-bold synthesis that smears the glyphs, so headings are pinned light.
+ * Carried over from LTM, where this was diagnosed.
+ */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 400;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+::selection {
+  background: rgba(0, 255, 198, 0.3);
+  color: var(--text);
+}
+
+*:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px rgba(0, 255, 198, 0.6);
+  border-radius: 0.25rem;
+}
+
+/* Tabular figures wherever numbers are compared down a column. */
 .nums {
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
@@ -95,8 +103,26 @@ body {
   border-radius: 0.75rem;
 }
 
+.card-interactive {
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.card-interactive:hover {
+  border-color: rgba(0, 255, 198, 0.4);
+}
+
 .hairline {
   border-color: var(--border);
+}
+
+/* LTM's mono eyebrow, used for small section labels. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: rgba(0, 255, 198, 0.8);
 }
 
 /* Wide tables scroll inside their own container; the page body never does. */
@@ -113,6 +139,48 @@ th[data-sortable]:hover {
   color: var(--text);
 }
 
+input,
+select {
+  color: var(--text);
+}
+input::placeholder {
+  color: var(--text-faint);
+}
+select option {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
 input[type='range'] {
   accent-color: var(--accent);
+}
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Comfortable tap targets on touch devices without bloating desktop density. */
+@media (hover: none) and (pointer: coarse) {
+  button,
+  a,
+  input[type='checkbox'],
+  select {
+    min-height: 40px;
+  }
+  input[type='checkbox'] {
+    width: 1.15rem;
+    height: 1.15rem;
+    min-height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -25,14 +25,14 @@ export default function SymbolSearch({ autoFocus = false }: { autoFocus?: boolea
         autoFocus={autoFocus}
         spellCheck={false}
         autoComplete="off"
-        className="flex-1 min-w-0 rounded-lg border px-3 py-2 text-sm bg-transparent"
+        className="flex-1 min-w-0 rounded-lg border px-3 py-2.5 text-base sm:text-sm bg-transparent"
         style={{ borderColor: 'var(--border-strong)' }}
       />
       <button
         type="submit"
         disabled={pending || value.trim().length === 0}
-        className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 whitespace-nowrap"
-        style={{ background: 'var(--accent)', color: 'var(--bg-raised)' }}
+        className="rounded-lg px-4 py-2.5 text-sm font-medium disabled:opacity-50 whitespace-nowrap"
+        style={{ background: 'var(--accent)', color: '#050507' }}
       >
         {pending ? 'Loading…' : 'Screen'}
       </button>

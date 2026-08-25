@@ -90,11 +90,11 @@ export default async function SymbolPage({ params }: Props) {
   ]
 
   return (
-    <div className="mx-auto max-w-6xl px-5 md:px-6 py-8">
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8">
       <div className="flex items-start justify-between gap-6 flex-wrap mb-6">
         <div>
           <div className="flex items-baseline gap-3">
-            <h1 className="text-3xl font-semibold tracking-tight">{data.symbol}</h1>
+            <h1 className="font-display uppercase tracking-wide text-3xl sm:text-4xl">{data.symbol}</h1>
             <span className="nums text-xl" style={{ color: 'var(--text-muted)' }}>
               {usd(data.spot)}
             </span>
@@ -134,7 +134,7 @@ export default async function SymbolPage({ params }: Props) {
           'Trading above a falling long-term average, which is a bounce rather than an uptrend.'}
       </div>
 
-      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 mb-6">
+      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 mb-6">
         {stats.map((s) => (
           <div key={s.label} className="px-4 py-3" title={s.hint}>
             <dt className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-faint)' }}>
@@ -236,7 +236,7 @@ function TemporarilyUnavailable({ symbol, detail }: { symbol: string; detail: st
   const rateLimited = /429/.test(detail)
 
   return (
-    <div className="mx-auto max-w-2xl px-5 md:px-6 py-16">
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-14 sm:py-16">
       <h1 className="text-2xl font-semibold tracking-tight mb-2">
         {symbol} could not be loaded right now
       </h1>
@@ -249,7 +249,7 @@ function TemporarilyUnavailable({ symbol, detail }: { symbol: string; detail: st
         <Link
           href={`/put/${symbol}`}
           className="rounded-lg px-4 py-2 text-sm font-medium"
-          style={{ background: 'var(--accent)', color: 'var(--bg-raised)' }}
+          style={{ background: 'var(--accent)', color: '#050507' }}
         >
           Try again
         </Link>

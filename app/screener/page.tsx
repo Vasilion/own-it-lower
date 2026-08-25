@@ -35,9 +35,9 @@ export default async function ScreenerPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-5 md:px-6 py-8">
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Screener</h1>
+        <h1 className="font-display uppercase tracking-wide text-3xl sm:text-4xl">Screener</h1>
         <p className="text-[13px] mt-1 max-w-2xl" style={{ color: 'var(--text-muted)' }}>
           The S&amp;P 500 plus liquid names outside the index and the major ETFs, each scored on
           whether it is worth owning and has pulled back to support with option premium worth

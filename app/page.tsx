@@ -6,14 +6,15 @@ const EXAMPLES = ['NVDA', 'AAPL', 'KO', 'JPM', 'XOM', 'PG']
 
 export default function Home() {
   return (
-    <div className="mx-auto max-w-3xl px-5 md:px-6 py-16 md:py-24">
-      <h1 className="text-4xl md:text-5xl font-semibold tracking-tight leading-[1.1]">
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-12 sm:py-16 md:py-24">
+      <p className="eyebrow mb-4">Cash-secured puts</p>
+      <h1 className="font-display uppercase leading-[0.92] tracking-wide text-[clamp(2.75rem,11vw,4.5rem)]">
         Own great companies
         <br />
         <span style={{ color: 'var(--accent)' }}>lower.</span>
       </h1>
 
-      <p className="mt-5 text-[17px] leading-relaxed max-w-xl" style={{ color: 'var(--text-muted)' }}>
+      <p className="mt-5 text-[16px] sm:text-[17px] leading-relaxed max-w-xl" style={{ color: 'var(--text-muted)' }}>
         Selling a cash-secured put pays you to name the price you would happily buy a stock at. This
         screens the option chain, ranks the strikes against settings you choose, and shows the
         arithmetic behind every one.
@@ -41,7 +42,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="mt-16 grid gap-8 sm:grid-cols-3">
+      <div className="mt-14 sm:mt-16 grid gap-7 sm:gap-8 sm:grid-cols-3">
         <Feature title="It ranks, it doesn't filter">
           Most screeners take numeric ranges and hand back matching rows. Tell this one whether you
           would actually be happy owning the shares, and the same chain comes back in a different
@@ -57,7 +58,7 @@ export default function Home() {
         </Feature>
       </div>
 
-      <div className="mt-16 pt-8 border-t hairline">
+      <div className="mt-14 sm:mt-16 pt-8 border-t hairline">
         <h2 className="text-sm font-semibold mb-2">What this is not</h2>
         <p className="text-[13px] leading-relaxed max-w-xl" style={{ color: 'var(--text-muted)' }}>
           It is not advice, and it does not know anything about you. There is no questionnaire about

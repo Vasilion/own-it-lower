@@ -1,7 +1,14 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
+import { Anton, Inter, JetBrains_Mono } from 'next/font/google'
 import Link from 'next/link'
 
 import './globals.css'
+
+// Same stack as Leaving The Matrix: Anton for display, Inter for UI, JetBrains
+// Mono for figures. Loaded through next/font so there is no flash or layout shift.
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
+const anton = Anton({ subsets: ['latin'], weight: '400', variable: '--font-anton', display: 'swap' })
+const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono-jb', display: 'swap' })
 
 export const metadata: Metadata = {
   title: {
@@ -12,38 +19,50 @@ export const metadata: Metadata = {
     'Find cash-secured puts on quality companies that have pulled back. Ranked against settings you choose, with the arithmetic shown.',
 }
 
+export const viewport: Viewport = {
+  themeColor: '#050507',
+  // Pinch-zoom stays available: disabling it on a page full of dense figures
+  // would be a genuine accessibility problem.
+  width: 'device-width',
+  initialScale: 1,
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${inter.variable} ${anton.variable} ${jetbrains.variable}`}>
       <body className="min-h-dvh flex flex-col">
-        <header className="border-b hairline">
-          <div className="mx-auto max-w-6xl px-5 md:px-6 h-14 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-6">
-              <Link href="/" className="font-semibold tracking-tight text-[15px]">
-                Own It&nbsp;
-                <span style={{ color: 'var(--accent)' }}>Lower</span>
+        <header className="border-b hairline sticky top-0 z-20" style={{ background: 'var(--bg)' }}>
+          <div className="mx-auto max-w-6xl px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-5 sm:gap-7 min-w-0">
+              <Link
+                href="/"
+                className="font-display text-lg sm:text-xl tracking-wide uppercase whitespace-nowrap"
+              >
+                Own It <span style={{ color: 'var(--accent)' }}>Lower</span>
               </Link>
-              <Link href="/screener" className="text-[13px] hover:underline underline-offset-4">
+              <Link
+                href="/screener"
+                className="text-[13px] whitespace-nowrap hover:underline underline-offset-4"
+                style={{ color: 'var(--text-muted)' }}
+              >
                 Screener
               </Link>
             </div>
-            <span className="text-xs hidden sm:block" style={{ color: 'var(--text-faint)' }}>
-              Educational tool · 15-minute delayed data
-            </span>
+            <span className="eyebrow hidden md:block">15-min delayed · educational</span>
           </div>
         </header>
 
         <main className="flex-1">{children}</main>
 
         {/*
-          The disclaimer is deliberately part of the layout rather than a page the
-          user has to find. This tool ranks contracts against parameters the user
-          chose and shows its arithmetic; it does not advise. Keeping that visible
-          on every screen is the cheapest possible compliance measure.
+          The disclaimer lives in the layout rather than on a page the user has to
+          find. This tool ranks contracts against parameters the user chose and
+          shows its arithmetic; it does not advise. Keeping that on every screen is
+          the cheapest possible compliance measure.
         */}
         <footer className="border-t hairline mt-16">
           <div
-            className="mx-auto max-w-6xl px-5 md:px-6 py-6 text-xs leading-relaxed"
+            className="mx-auto max-w-6xl px-4 sm:px-6 py-6 text-xs leading-relaxed"
             style={{ color: 'var(--text-faint)' }}
           >
             <p className="mb-2">
