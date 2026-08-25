@@ -12,7 +12,12 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'sw
 const anton = Anton({ subsets: ['latin'], weight: '400', variable: '--font-anton', display: 'swap' })
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono-jb', display: 'swap' })
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ownitlower.leavingthematrix.io'
+
 export const metadata: Metadata = {
+  // Makes every relative OG/Twitter image URL absolute, which social crawlers
+  // require — a relative path is silently ignored and the card renders blank.
+  metadataBase: new URL(SITE_URL),
   title: {
     default: 'Own It Lower — cash-secured put screener',
     template: '%s · Own It Lower',
@@ -25,8 +30,19 @@ export const metadata: Metadata = {
     title: 'Own It Lower',
     statusBarStyle: 'black-translucent',
   },
-  icons: {
-    apple: '/icons/apple-touch-icon.png',
+  openGraph: {
+    type: 'website',
+    siteName: 'Own It Lower',
+    title: 'Own It Lower — cash-secured put screener',
+    description:
+      'Quality companies that have pulled back, with the strikes ranked against settings you choose and the arithmetic shown.',
+    url: SITE_URL,
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Own It Lower — cash-secured put screener',
+    description:
+      'Quality companies that have pulled back, with the strikes ranked against settings you choose and the arithmetic shown.',
   },
 }
 

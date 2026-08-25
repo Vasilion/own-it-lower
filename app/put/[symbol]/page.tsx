@@ -18,9 +18,15 @@ interface Props {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { symbol } = await params
   const s = symbol.toUpperCase()
+  const description = `Cash-secured put analysis for ${s} — strikes ranked against your own settings, with annualised return, downside buffer and effective cost basis shown for each.`
+
   return {
     title: `${s} cash-secured puts`,
-    description: `Cash-secured put analysis for ${s} — strikes ranked against your own settings, with annualised return, downside buffer and effective cost basis shown for each.`,
+    description,
+    // The opengraph-image route in this folder supplies the card itself; these
+    // only need to carry the matching text.
+    openGraph: { title: `${s} cash-secured puts`, description, type: 'article' },
+    twitter: { card: 'summary_large_image', title: `${s} cash-secured puts`, description },
   }
 }
 
