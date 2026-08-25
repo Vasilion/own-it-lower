@@ -29,12 +29,16 @@ scoring weights.
 
 ```bash
 pnpm install
-cp .env.example .env.local   # then fill in the values
-pnpm check:provider          # confirm the data source is actually healthy
-pnpm db:push                 # create tables in Neon
+pnpm check:provider          # works immediately — CBOE needs no key
 pnpm snapshot:iv --dry AAPL  # fetch + parse only, no database needed
+
+cp .env.example .env.local   # only DATABASE_URL is actually required
+pnpm db:push                 # create tables in Neon
 pnpm snapshot:iv             # full universe, writes to Neon
 ```
+
+The only credential this project needs is a Neon connection string. The options
+data source requires no account.
 
 ## Commands
 
@@ -63,6 +67,32 @@ not on the response status.
 
 Providers are pluggable behind `OptionsProvider` (`lib/data/types.ts`), so swapping
 vendors is a config change.
+
+### Where the data comes from
+
+**CBOE, by default, with no account and no API key.** CBOE publishes the delayed
+chains that power their own public website as plain JSON. One request returns the
+entire chain — every expiration and strike, with bid/ask, IV, open interest and a
+full set of greeks, plus the underlying quote and CBOE's own 30-day IV.
+
+Verified against AAPL, MSFT and KO: tight two-sided markets, IV in the right bands
+(AAPL 21–28%, KO 18–23%), monotonic deltas, open interest decaying away from the
+money, and a clean volatility smile.
+
+Two caveats, both deliberate:
+
+- It is an undocumented endpoint serving a public site, so it can change without
+  notice. Hence the provider interface and the CI health check.
+- Free public access is not a redistribution licence. Fine for development and for
+  accumulating our own derived IV history; confirm terms with CBOE before showing
+  their quotes to a paying user.
+
+Tradier is wired up as the paid fallback (its IV and greeks come from ORATS), but it
+requires opening a brokerage account, so it is not the default.
+
+CBOE is paced at 50 requests/minute with an adaptive limiter. Measured: 60/min over
+distinct symbols runs clean, while 100/min with 8 concurrent 1.5MB downloads draws
+sustained 429s about 55 symbols in.
 
 ## Why the IV snapshot runs before anything else exists
 

@@ -14,7 +14,7 @@
  * vendor-email.md). That confirmation gates production use, not prototyping.
  */
 
-import { createRateLimiter, withRetry } from '../pool'
+import { RateLimiter, withRetry } from '../pool'
 import type { OptionChain, OptionQuote, OptionsProvider } from '../types'
 
 const SANDBOX = 'https://sandbox.tradier.com/v1'
@@ -86,28 +86,35 @@ export class TradierProvider implements OptionsProvider {
   readonly suppliesIv = true
   private readonly base: string
   private readonly token: string
-  private readonly acquire: () => Promise<void>
+  private readonly limiter: RateLimiter
 
   constructor(token: string, mode: 'sandbox' | 'production' = 'sandbox') {
     if (!token.trim()) throw new Error('TradierProvider: empty access token')
     this.token = token.trim()
     this.base = mode === 'production' ? PRODUCTION : SANDBOX
     this.name = `tradier:${mode}`
-    this.acquire = createRateLimiter(RATE_PER_MINUTE[mode])
+    this.limiter = new RateLimiter(RATE_PER_MINUTE[mode])
   }
 
   private async get<T>(path: string, params: Record<string, string>): Promise<T> {
     const url = `${this.base}${path}?${new URLSearchParams(params)}`
     return withRetry(
       async () => {
-        await this.acquire()
+        await this.limiter.acquire()
         const res = await fetch(url, {
           headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
         })
+        if (res.status === 429) {
+          const retryAfter = Number(res.headers.get('retry-after'))
+          this.limiter.throttled(Number.isFinite(retryAfter) ? retryAfter : undefined)
+          throw new Error(`tradier ${path} http 429`)
+        }
         if (!res.ok) {
           const body = await res.text().catch(() => '')
           throw new Error(`tradier ${path} http ${res.status}${body ? `: ${body.slice(0, 160)}` : ''}`)
         }
+
+        this.limiter.succeeded()
         return (await res.json()) as T
       },
       // 401/403 are credential problems; retrying just burns quota.

@@ -61,22 +61,62 @@ export async function withRetry<T>(
 }
 
 /**
- * Global request spacer: allows at most `perMinute` starts, evenly spaced.
+ * Adaptive request pacer shared by every caller of one provider.
  *
- * Bounded concurrency alone does not prevent a burst — five workers finishing at
- * once fire five immediate requests. Tradier's sandbox caps at 60 requests/minute
- * and answers 429 past that, so a fan-out over 500 symbols needs pacing, not just
- * a worker cap.
+ * Bounded concurrency alone does not prevent a burst -- several workers finishing
+ * together fire several immediate requests. Worse, a fixed rate cannot react when
+ * a host tightens up.
+ *
+ * Measured against CBOE on 2026-08-25: 60 requests/minute over distinct (uncached)
+ * symbols ran clean, while 100/min with 8 concurrent 1.5MB downloads drew sustained
+ * 429s about 55 symbols in. So the pacer starts at a proven-safe rate, backs off
+ * hard when throttled -- pausing every caller, not just the unlucky one -- and
+ * drifts back toward baseline as requests succeed.
  */
-export function createRateLimiter(perMinute: number) {
-  const minIntervalMs = 60_000 / perMinute
-  let nextSlot = 0
+export class RateLimiter {
+  private intervalMs: number
+  private readonly baseIntervalMs: number
+  private nextSlot = 0
+  private cooldownUntil = 0
 
-  return async function acquire(): Promise<void> {
-    const now = Date.now()
-    const slot = Math.max(now, nextSlot)
-    nextSlot = slot + minIntervalMs
-    const wait = slot - now
-    if (wait > 0) await sleep(wait)
+  constructor(perMinute: number) {
+    this.baseIntervalMs = 60_000 / perMinute
+    this.intervalMs = this.baseIntervalMs
+  }
+
+  /** Resolves when the caller may issue its request. */
+  async acquire(): Promise<void> {
+    for (;;) {
+      const now = Date.now()
+      // A cooldown from a 429 outranks the normal schedule; re-check after waiting
+      // because another worker may have extended it meanwhile.
+      if (now < this.cooldownUntil) {
+        await sleep(this.cooldownUntil - now)
+        continue
+      }
+      const slot = Math.max(now, this.nextSlot)
+      this.nextSlot = slot + this.intervalMs
+      const wait = slot - now
+      if (wait > 0) await sleep(wait)
+      return
+    }
+  }
+
+  /** Report a 429. Halves the pace and pauses all callers. */
+  throttled(retryAfterSeconds?: number): void {
+    this.intervalMs = Math.min(this.intervalMs * 2, this.baseIntervalMs * 8)
+    const pauseMs = Math.min(Math.max(retryAfterSeconds ?? 20, 5), 120) * 1000
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + pauseMs)
+  }
+
+  /** Report a success. Eases the pace back toward the configured rate. */
+  succeeded(): void {
+    if (this.intervalMs > this.baseIntervalMs) {
+      this.intervalMs = Math.max(this.baseIntervalMs, this.intervalMs * 0.97)
+    }
+  }
+
+  get currentPerMinute(): number {
+    return Math.round(60_000 / this.intervalMs)
   }
 }

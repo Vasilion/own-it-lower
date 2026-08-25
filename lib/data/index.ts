@@ -1,3 +1,4 @@
+import { CboeProvider } from './providers/cboe'
 import { TradierProvider } from './providers/tradier'
 import { YahooProvider } from './providers/yahoo'
 import type { OptionsProvider } from './types'
@@ -14,10 +15,16 @@ function env(name: string): string | undefined {
 /**
  * Resolve the configured options provider.
  *
- * OPTIONS_PROVIDER selects explicitly; otherwise a Tradier token implies Tradier.
- * Yahoo is never chosen automatically — it does not return usable implied
- * volatility (see providers/yahoo.ts), and silently defaulting to it would
- * produce a database full of confident-looking zeros.
+ * Default is CBOE: it needs no account, no API key and no brokerage onboarding,
+ * returns a full verified chain in one request, and delayed data is the posture
+ * this product deliberately ships anyway.
+ *
+ * Tradier is used when a token is present -- it is the paid fallback if CBOE's
+ * public endpoint changes.
+ *
+ * Yahoo is never selected automatically. Its free options endpoint no longer
+ * returns usable implied volatility, and defaulting to it would produce a
+ * database full of confident-looking zeros.
  */
 export function getOptionsProvider(): OptionsProvider {
   const explicit = env('OPTIONS_PROVIDER')?.toLowerCase()
@@ -25,6 +32,8 @@ export function getOptionsProvider(): OptionsProvider {
   const tradierMode = env('TRADIER_MODE') === 'production' ? 'production' : 'sandbox'
 
   switch (explicit) {
+    case 'cboe':
+      return new CboeProvider()
     case 'tradier':
       if (!tradierToken) throw new Error('OPTIONS_PROVIDER=tradier but TRADIER_ACCESS_TOKEN is not set')
       return new TradierProvider(tradierToken, tradierMode)
@@ -33,14 +42,9 @@ export function getOptionsProvider(): OptionsProvider {
     case undefined:
       break
     default:
-      throw new Error(`Unknown OPTIONS_PROVIDER "${explicit}" (expected "tradier" or "yahoo")`)
+      throw new Error(`Unknown OPTIONS_PROVIDER "${explicit}" (expected "cboe", "tradier" or "yahoo")`)
   }
 
   if (tradierToken) return new TradierProvider(tradierToken, tradierMode)
-
-  throw new Error(
-    'No options data provider configured.\n' +
-      'Create a free Tradier sandbox account at https://developer.tradier.com/user/sign_up,\n' +
-      'then put the access token in .env.local as TRADIER_ACCESS_TOKEN.',
-  )
+  return new CboeProvider()
 }

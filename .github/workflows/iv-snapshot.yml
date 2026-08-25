@@ -18,7 +18,10 @@ concurrency:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # ~500 symbols paced at 50 requests/minute is roughly 10-12 minutes, plus a
+    # retry sweep. The ceiling is generous so a slow night fails on data quality
+    # rather than on the clock.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +42,7 @@ jobs:
       # would go green while writing placeholder data into the history table.
       - name: Verify data provider
         env:
+          OPTIONS_PROVIDER: ${{ vars.OPTIONS_PROVIDER }}
           TRADIER_ACCESS_TOKEN: ${{ secrets.TRADIER_ACCESS_TOKEN }}
           TRADIER_MODE: ${{ vars.TRADIER_MODE || 'sandbox' }}
         run: pnpm check:provider
@@ -46,6 +50,7 @@ jobs:
       - name: Capture IV snapshot
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPTIONS_PROVIDER: ${{ vars.OPTIONS_PROVIDER }}
           TRADIER_ACCESS_TOKEN: ${{ secrets.TRADIER_ACCESS_TOKEN }}
           TRADIER_MODE: ${{ vars.TRADIER_MODE || 'sandbox' }}
         run: pnpm snapshot:iv

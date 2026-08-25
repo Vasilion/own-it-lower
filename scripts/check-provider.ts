@@ -25,6 +25,7 @@
 import './load-env'
 
 import { getOptionsProvider } from '../lib/data'
+import { CboeProvider } from '../lib/data/providers/cboe'
 import { TradierProvider } from '../lib/data/providers/tradier'
 import { YahooProvider } from '../lib/data/providers/yahoo'
 import type { OptionsProvider } from '../lib/data/types'
@@ -43,6 +44,7 @@ interface Check {
 
 function resolveProvider(): OptionsProvider {
   const forced = process.argv.slice(2).find((a) => !a.startsWith('--'))?.toLowerCase()
+  if (forced === 'cboe') return new CboeProvider()
   if (forced === 'yahoo') return new YahooProvider()
   if (forced === 'tradier') {
     const token = process.env.TRADIER_ACCESS_TOKEN

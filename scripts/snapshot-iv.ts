@@ -24,8 +24,15 @@ import { getOptionsProvider, mapPool, type OptionQuote, type OptionsProvider } f
 const TARGET_DTE = 30
 const MIN_DTE = 14
 const MAX_DTE = 60
-/** The provider's own rate limiter does the real pacing; this just keeps workers fed. */
-const CONCURRENCY = 8
+/**
+ * The provider's rate limiter does the real pacing, but concurrency still matters:
+ * CBOE payloads are ~1.5MB each, and many simultaneous large transfers draw 429s
+ * even when the request rate looks acceptable. Keep the in-flight count small.
+ */
+const CONCURRENCY = 3
+
+/** Symbols with no chain at the provider (403/404) — retrying them is pointless. */
+const PERMANENT_FAILURE = /http 40[34]/
 
 /** Trading date in US market terms, so a late-night UTC run still books to the right day. */
 function marketDate(d = new Date()): string {
@@ -195,7 +202,33 @@ async function main() {
   )
 
   const rows = results.flatMap((r) => (r.value ? [r.value] : []))
-  const failures = results.filter((r) => r.error)
+  let failures = results.filter((r) => r.error)
+
+  /**
+   * Retry sweep.
+   *
+   * Transient failures mid-scan are the quiet killer here: the symbol simply has
+   * no row for the day, the job still reports mostly-success, and the gap only
+   * surfaces months later as a hole in that ticker's IV history. By the time the
+   * sweep runs the rate limiter has widened its pacing, so a second pass over a
+   * much smaller set usually clears most of them.
+   */
+  const retryable = failures.filter((f) => !PERMANENT_FAILURE.test(f.error!.message))
+  if (retryable.length > 0) {
+    console.log(`[snapshot-iv] retry sweep on ${retryable.length} transient failures...`)
+    const swept = await mapPool(
+      retryable.map((f) => f.item as string),
+      1,
+      (s) => snapshotSymbol(provider, s, today, spots.get(s)),
+    )
+
+    const recovered = swept.flatMap((r) => (r.value ? [r.value] : []))
+    rows.push(...recovered)
+
+    const stillBad = new Set(swept.filter((r) => r.error).map((r) => r.item))
+    failures = failures.filter((f) => stillBad.has(f.item) || PERMANENT_FAILURE.test(f.error!.message))
+    console.log(`[snapshot-iv] sweep recovered ${recovered.length}, ${failures.length} still failing`)
+  }
 
   if (!dryRun && rows.length > 0) {
     for (let i = 0; i < rows.length; i += 100) {
