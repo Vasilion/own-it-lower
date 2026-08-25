@@ -17,6 +17,7 @@
  */
 
 import { putGreeks, yearsToExpiry } from './blackscholes'
+import { priceZone, scoreStructure, supportBelow, ZONE_LABEL } from './volume-profile'
 import { combine, scoreAbove, scoreBelow, scorePeak, type Component } from './scoring'
 import type {
   AssignmentStance,
@@ -38,9 +39,9 @@ import type { OptionQuote } from '../data/types'
  *             and entry price barely matters because assignment is the bad case.
  */
 const WEIGHTS: Record<AssignmentStance, Record<string, number>> = {
-  want: { return: 0.14, safety: 0.14, entry: 0.26, liquidity: 0.13, timing: 0.08, discount: 0.15, quality: 0.10 },
-  neutral: { return: 0.20, safety: 0.21, entry: 0.15, liquidity: 0.13, timing: 0.10, discount: 0.11, quality: 0.10 },
-  avoid: { return: 0.26, safety: 0.30, entry: 0.05, liquidity: 0.13, timing: 0.13, discount: 0.07, quality: 0.06 },
+  want:    { return: 0.13, safety: 0.13, entry: 0.24, liquidity: 0.12, timing: 0.07, discount: 0.13, quality: 0.09, structure: 0.09 },
+  neutral: { return: 0.18, safety: 0.19, entry: 0.14, liquidity: 0.12, timing: 0.09, discount: 0.10, quality: 0.09, structure: 0.09 },
+  avoid:   { return: 0.24, safety: 0.28, entry: 0.05, liquidity: 0.12, timing: 0.12, discount: 0.06, quality: 0.05, structure: 0.08 },
 }
 
 // Note: there is deliberately no "delta preference" component. Delta is already a
@@ -123,6 +124,7 @@ export function measureContract(
     probOtm: greeks?.probOtm ?? 1 - delta,
     deltaSource,
     impliedVolatility: iv ?? null,
+    volumeSupport: ctx.volumeProfile ? supportBelow(ctx.volumeProfile, breakeven) : null,
     spreadPct,
     openInterest,
     volume,
@@ -255,6 +257,17 @@ function scoreComponents(
       score: discountScore,
       weight: w.discount,
       detail: discountScore === null ? 'price history not loaded' : `technical setup scores ${discountScore.toFixed(0)}`,
+    },
+    {
+      key: 'structure',
+      label: 'Support',
+      // Abstains without a profile rather than scoring zero -- a symbol whose
+      // price history failed to load has unknown support, not absent support.
+      score: ctx.volumeProfile ? scoreStructure(ctx.volumeProfile, m.breakeven) : null,
+      weight: w.structure,
+      detail: ctx.volumeProfile
+        ? `${pct(m.volumeSupport ?? 0)} of traded volume sits just below break-even, ${ZONE_LABEL[priceZone(ctx.volumeProfile, m.breakeven)]}`
+        : 'volume profile unavailable',
     },
     {
       key: 'quality',

@@ -20,6 +20,11 @@ export interface PriceHistory {
   symbol: string
   /** Chronological daily closes, nulls stripped. */
   closes: number[]
+  /**
+   * Full OHLCV bars aligned to `closes`. Needed for the volume profile, which
+   * spreads each day's volume across its high-low range.
+   */
+  bars: Array<{ high: number; low: number; close: number; volume: number }>
   /** Unix seconds aligned to `closes`. */
   timestamps: number[]
   /** Latest regular-market price from the response metadata. */
@@ -31,7 +36,14 @@ interface RawChart {
     result?: Array<{
       meta?: { regularMarketPrice?: number }
       timestamp?: number[]
-      indicators?: { quote?: Array<{ close?: Array<number | null> }> }
+      indicators?: {
+        quote?: Array<{
+          close?: Array<number | null>
+          high?: Array<number | null>
+          low?: Array<number | null>
+          volume?: Array<number | null>
+        }>
+      }
     }>
     error?: { description?: string } | null
   }
@@ -62,17 +74,32 @@ export async function fetchPriceHistory(symbol: string, range = '1y'): Promise<P
   const result = raw.chart?.result?.[0]
   if (!result) throw new Error(`prices: no history for ${symbol}`)
 
-  const rawCloses = result.indicators?.quote?.[0]?.close ?? []
+  const quote = result.indicators?.quote?.[0]
+  const rawCloses = quote?.close ?? []
+  const rawHighs = quote?.high ?? []
+  const rawLows = quote?.low ?? []
+  const rawVolumes = quote?.volume ?? []
   const rawStamps = result.timestamp ?? []
 
-  // Keep closes and timestamps aligned while dropping halted/missing sessions.
+  // Keep every series aligned while dropping halted/missing sessions.
   const closes: number[] = []
   const timestamps: number[] = []
+  const bars: PriceHistory['bars'] = []
+
   for (let i = 0; i < rawCloses.length; i++) {
     const c = rawCloses[i]
-    if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
-      closes.push(c)
-      timestamps.push(rawStamps[i] ?? 0)
+    if (typeof c !== 'number' || !Number.isFinite(c) || c <= 0) continue
+
+    closes.push(c)
+    timestamps.push(rawStamps[i] ?? 0)
+
+    const h = rawHighs[i]
+    const l = rawLows[i]
+    const v = rawVolumes[i]
+    // A bar missing high/low/volume is unusable for the profile but its close is
+    // still fine for moving averages, so only the bar is skipped.
+    if (typeof h === 'number' && typeof l === 'number' && typeof v === 'number' && v > 0) {
+      bars.push({ high: h, low: l, close: c, volume: v })
     }
   }
 
@@ -81,6 +108,7 @@ export async function fetchPriceHistory(symbol: string, range = '1y'): Promise<P
   return {
     symbol,
     closes,
+    bars,
     timestamps,
     spot: result.meta?.regularMarketPrice ?? closes[closes.length - 1],
   }

@@ -15,6 +15,7 @@
  */
 
 import type { ContractMetrics, StrategyPreset, UnderlyingContext } from './types'
+import { priceZone, ZONE_LABEL } from './volume-profile'
 
 const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`
 const usd = (v: number) => `$${v.toFixed(2)}`
@@ -83,6 +84,15 @@ export function explainContract(
 
   if (m.impliedVolatility) {
     parts.push(`Implied volatility on this contract is ${pct(m.impliedVolatility)}.`)
+  }
+
+  if (ctx.volumeProfile && m.volumeSupport !== null) {
+    const zone = priceZone(ctx.volumeProfile, m.breakeven)
+    parts.push(
+      `Over the last ${ctx.volumeProfile.sessions} sessions the heaviest traded price was ` +
+        `${usd(ctx.volumeProfile.poc)}, and ${pct(m.volumeSupport)} of all volume traded in the ` +
+        `band just beneath this break-even, which sits ${ZONE_LABEL[zone]}.`,
+    )
   }
 
   // -- Flags. Stated as conditions, not as verdicts.

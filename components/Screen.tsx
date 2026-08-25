@@ -5,6 +5,8 @@ import { Fragment, useMemo, useState } from 'react'
 import { explainContract } from '@/lib/engine/explain'
 import { rankPuts, soleBlockers, tallyExclusions } from '@/lib/engine/fit'
 import { makePreset, type AssignmentStance, type StrategyPreset } from '@/lib/engine/types'
+import { computeVolumeProfile } from '@/lib/engine/volume-profile'
+import VolumeProfilePanel from '@/components/VolumeProfilePanel'
 import type { AnalysisPayload } from '@/lib/server/analyze'
 
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
@@ -83,6 +85,9 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fitScore', dir: 'desc' })
   const [expanded, setExpanded] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Visible-range equivalent. 252 sessions is one year; shorter windows weight
+  // recent trading more heavily.
+  const [lookback, setLookback] = useState(252)
 
   const preset: StrategyPreset = useMemo(
     () =>
@@ -99,6 +104,17 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
     [capital, maxPositionPct, stance, minDte, maxDte, avoidEarnings, minIv, maxIv],
   )
 
+  // Recomputed here rather than server-side so changing the lookback is instant.
+  const volumeProfile = useMemo(
+    () => computeVolumeProfile(data.bars, lookback),
+    [data.bars, lookback],
+  )
+
+  const context = useMemo(
+    () => ({ ...data.context, volumeProfile: volumeProfile ?? undefined }),
+    [data.context, volumeProfile],
+  )
+
   // Ranking runs in the browser. The engine is pure TypeScript with no network or
   // framework dependency, so every settings change re-ranks instantly rather than
   // costing a server round trip.
@@ -107,7 +123,7 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
       symbol: data.symbol,
       puts: data.puts,
       dteByExpiry: new Map(Object.entries(data.dte)),
-      context: data.context,
+      context,
       preset,
       riskFreeRate: data.riskFreeRate,
       includeExcluded: true,
@@ -129,7 +145,7 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
         iv: blockers.iv,
       },
     }
-  }, [data, preset])
+  }, [data, preset, context])
 
   const sorted = useMemo(() => {
     const rows = [...ranked]
@@ -340,6 +356,16 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
 
       {/* ---------------- Results ---------------- */}
       <section>
+        <div className="mb-4">
+          <VolumeProfilePanel
+            profile={volumeProfile}
+            spot={data.spot}
+            strikes={ranked.slice(0, 8).map((r) => r.metrics.breakeven)}
+            lookback={lookback}
+            onLookbackChange={setLookback}
+          />
+        </div>
+
         <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
             <span className="font-medium" style={{ color: 'var(--text)' }}>
@@ -415,7 +441,7 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
                     {isOpen && (
                       <div className="px-4 pb-4" style={{ background: 'var(--bg-sunken)' }}>
                         <p className="text-[13px] leading-relaxed pt-3 mb-4">
-                          {explainContract(m, data.context, preset)}
+                          {explainContract(m, context, preset)}
                         </p>
                         <Breakdown components={r.components} abstained={r.abstainedWeight} />
                       </div>
@@ -510,7 +536,7 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
                               style={{ background: 'var(--bg-sunken)' }}
                             >
                               <p className="text-[13px] leading-relaxed mb-4 max-w-3xl">
-                                {explainContract(m, data.context, preset)}
+                                {explainContract(m, context, preset)}
                               </p>
                               <Breakdown components={r.components} abstained={r.abstainedWeight} />
                             </td>

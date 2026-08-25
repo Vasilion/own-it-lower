@@ -30,6 +30,14 @@ export interface AnalysisPayload {
   dte: Record<string, number>
   context: UnderlyingContext
   technicals: Technicals
+  /**
+   * Daily OHLCV bars, sent so the client can compute the volume profile itself.
+   *
+   * The profile's lookback genuinely changes the answer — GOOG's point of control
+   * was $342 over 130 sessions and $317 over 252 — so it has to be adjustable, and
+   * recomputing in the browser makes that instant. Roughly 250 bars, a few KB.
+   */
+  bars: Array<{ high: number; low: number; close: number; volume: number }>
   fundamentals: Fundamentals | null
   quality: QualityResult | null
   riskFreeRate: number
@@ -99,6 +107,7 @@ export async function analyzeSymbol(rawSymbol: string): Promise<AnalysisPayload>
     dte,
     context,
     technicals,
+    bars: history.bars,
     fundamentals,
     quality,
     riskFreeRate: rate.rate,

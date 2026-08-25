@@ -1,4 +1,5 @@
 import type { Component } from './scoring'
+import type { VolumeProfile } from './volume-profile'
 
 /**
  * How the user feels about actually being assigned the shares.
@@ -178,6 +179,15 @@ export interface ContractMetrics {
   /** Where delta came from, since a vendor value beats our recomputation. */
   deltaSource: 'provider' | 'computed'
 
+  /**
+   * Share of traded volume in the 12% band beneath break-even, 0-1.
+   *
+   * The structural-support measure: a thick shelf of prior trading below your
+   * break-even means buyers have repeatedly defended that band. Null when no
+   * volume profile is available.
+   */
+  volumeSupport: number | null
+
   spreadPct: number
   openInterest: number
   volume: number
@@ -215,6 +225,13 @@ export interface UnderlyingContext {
   discountScore?: number
   /** Next confirmed earnings date, ISO. */
   nextEarnings?: string
+  /**
+   * Volume-at-price over the user's chosen lookback.
+   *
+   * Computed client-side so the lookback can be changed without a round trip —
+   * and the lookback genuinely changes the answer, so it has to be adjustable.
+   */
+  volumeProfile?: VolumeProfile
 }
 
 export interface FitResult {

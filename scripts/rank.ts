@@ -18,6 +18,7 @@ import { rankPuts, tallyExclusions } from '../lib/engine/fit'
 import { TREND_LABEL } from '../lib/engine/technicals'
 import { makePreset, type AssignmentStance } from '../lib/engine/types'
 import { analyzeSymbol } from '../lib/server/analyze'
+import { computeVolumeProfile } from '../lib/engine/volume-profile'
 
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
 
@@ -62,7 +63,11 @@ async function main() {
   // Uses exactly the same code path as the web app, so a discrepancy between
   // what the CLI prints and what the page renders can only come from settings.
   const data = await analyzeSymbol(symbol)
-  const { context, technicals, provider } = data
+  const { technicals, provider } = data
+  // The web client computes this too; doing it here keeps CLI and page identical.
+  const lookback = Number(arg('lookback') ?? 252)
+  const volumeProfile = computeVolumeProfile(data.bars, lookback)
+  const context = { ...data.context, volumeProfile: volumeProfile ?? undefined }
   const puts = data.puts
   const dteByExpiry = new Map(Object.entries(data.dte))
 
