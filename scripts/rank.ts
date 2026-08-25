@@ -13,64 +13,17 @@
 
 import './load-env'
 
-import { getOptionsProvider } from '../lib/data'
-import { fetchPriceHistory } from '../lib/data/prices'
-import { getRiskFreeRate } from '../lib/data/rates'
 import { explainContract, summariseContract } from '../lib/engine/explain'
 import { rankPuts, tallyExclusions } from '../lib/engine/fit'
-import { computeTechnicals, scoreDiscount, TREND_LABEL } from '../lib/engine/technicals'
-import { makePreset, type AssignmentStance, type UnderlyingContext } from '../lib/engine/types'
-import type { OptionQuote } from '../lib/data/types'
+import { TREND_LABEL } from '../lib/engine/technicals'
+import { makePreset, type AssignmentStance } from '../lib/engine/types'
+import { analyzeSymbol } from '../lib/server/analyze'
 
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
 
 function arg(name: string): string | undefined {
   const hit = process.argv.slice(2).find((a) => a.startsWith(`--${name}=`))
   return hit?.split('=')[1]
-}
-
-async function gather(symbol: string, minDte: number, maxDte: number) {
-  const provider = getOptionsProvider()
-
-  const [expirations, history, rate] = await Promise.all([
-    provider.listExpirations(symbol),
-    fetchPriceHistory(symbol),
-    getRiskFreeRate(),
-  ])
-
-  const now = Date.now()
-  const wanted = expirations
-    .map((iso) => ({ iso, dte: Math.round((Date.parse(`${iso}T00:00:00Z`) - now) / 86_400_000) }))
-    .filter((e) => e.dte >= minDte && e.dte <= maxDte)
-
-  if (wanted.length === 0) throw new Error(`no expiries between ${minDte} and ${maxDte} days out`)
-
-  // Every getChain call here is served from the provider's cached payload, so this
-  // loop costs no additional network requests.
-  const puts: OptionQuote[] = []
-  const dteByExpiry = new Map<string, number>()
-  let spot = 0
-
-  for (const e of wanted) {
-    const chain = await provider.getChain(symbol, e.iso)
-    puts.push(...chain.puts)
-    dteByExpiry.set(e.iso, e.dte)
-    spot = chain.spot || spot
-  }
-
-  const technicals = computeTechnicals(history.closes, spot || history.spot)
-
-  const context: UnderlyingContext = {
-    spot: spot || history.spot,
-    sma200: technicals.sma200 ?? undefined,
-    sma200Slope: technicals.sma200Slope ?? undefined,
-    sma50: technicals.sma50 ?? undefined,
-    low52: technicals.low52 ?? undefined,
-    high52: technicals.high52 ?? undefined,
-    discountScore: scoreDiscount(technicals) ?? undefined,
-  }
-
-  return { puts, dteByExpiry, context, technicals, rate, provider: provider.name }
 }
 
 function printTable(
@@ -105,12 +58,12 @@ async function main() {
   const capital = Number(arg('capital') ?? 25_000)
   const stance = (arg('stance') ?? 'neutral') as AssignmentStance
 
-  const probe = makePreset({ capital })
-  const { puts, dteByExpiry, context, technicals, rate, provider } = await gather(
-    symbol,
-    probe.minDte,
-    probe.maxDte,
-  )
+  // Uses exactly the same code path as the web app, so a discrepancy between
+  // what the CLI prints and what the page renders can only come from settings.
+  const data = await analyzeSymbol(symbol)
+  const { context, technicals, provider } = data
+  const puts = data.puts
+  const dteByExpiry = new Map(Object.entries(data.dte))
 
   console.log(`\n${symbol} — $${context.spot.toFixed(2)}   [${provider}]`)
   console.log(
@@ -118,8 +71,16 @@ async function main() {
       `${technicals.distanceFrom200 !== null ? pct(technicals.distanceFrom200) : 'n/a'} away · ` +
       `RSI ${technicals.rsi14?.toFixed(0) ?? 'n/a'} · %B ${technicals.percentB?.toFixed(2) ?? 'n/a'}`,
   )
-  console.log(`  Trend: ${TREND_LABEL[technicals.trend]} (discount score ${scoreDiscount(technicals) ?? 'n/a'})`)
-  console.log(`  Risk-free rate ${pct(rate.rate, 2)} (${rate.source}) · ${puts.length} put contracts in window\n`)
+  console.log(`  Trend: ${TREND_LABEL[technicals.trend]} (discount ${context.discountScore ?? 'n/a'})`)
+  if (data.quality) {
+    const q = data.quality
+    console.log(
+      `  Quality: ${q.score === null ? 'n/a' : Math.round(q.score)}` +
+        (q.failures.length > 0 ? `  FAILS GATE: ${q.failures.join('; ')}` : '') +
+        (data.fundamentals?.nextEarnings ? `  · next earnings ${data.fundamentals.nextEarnings}` : ''),
+    )
+  }
+  console.log(`  Risk-free ${pct(data.riskFreeRate, 2)} (${data.rateSource}) · ${puts.length} puts\n`)
 
   const stances: AssignmentStance[] = compare ? ['want', 'neutral', 'avoid'] : [stance]
 
@@ -131,7 +92,7 @@ async function main() {
       dteByExpiry,
       context,
       preset,
-      riskFreeRate: rate.rate,
+      riskFreeRate: data.riskFreeRate,
       includeExcluded: true,
     })
     const ranked = all.filter((r) => r.exclusions.length === 0)

@@ -10,9 +10,11 @@
 import 'server-only'
 
 import { getOptionsProvider } from '../data'
+import { fetchFundamentals, type Fundamentals } from '../data/fundamentals'
 import { fetchPriceHistory } from '../data/prices'
 import { getRiskFreeRate } from '../data/rates'
 import type { OptionQuote } from '../data/types'
+import { scoreQuality, type QualityResult } from '../engine/quality'
 import { computeTechnicals, scoreDiscount, type Technicals } from '../engine/technicals'
 import type { UnderlyingContext } from '../engine/types'
 
@@ -28,6 +30,8 @@ export interface AnalysisPayload {
   dte: Record<string, number>
   context: UnderlyingContext
   technicals: Technicals
+  fundamentals: Fundamentals | null
+  quality: QualityResult | null
   riskFreeRate: number
   rateSource: string
   provider: string
@@ -41,10 +45,13 @@ export async function analyzeSymbol(rawSymbol: string): Promise<AnalysisPayload>
 
   const provider = getOptionsProvider()
 
-  const [expirations, history, rate] = await Promise.all([
+  // Fundamentals are allowed to fail without taking the page down: the quality
+  // component abstains and the rest of the analysis still stands.
+  const [expirations, history, rate, fundamentals] = await Promise.all([
     provider.listExpirations(symbol),
     fetchPriceHistory(symbol),
     getRiskFreeRate(),
+    fetchFundamentals(symbol).catch(() => null),
   ])
 
   const now = Date.now()
@@ -69,6 +76,8 @@ export async function analyzeSymbol(rawSymbol: string): Promise<AnalysisPayload>
   const resolvedSpot = spot || history.spot
   const technicals = computeTechnicals(history.closes, resolvedSpot)
 
+  const quality = fundamentals ? scoreQuality(fundamentals) : null
+
   const context: UnderlyingContext = {
     spot: resolvedSpot,
     sma200: technicals.sma200 ?? undefined,
@@ -77,6 +86,8 @@ export async function analyzeSymbol(rawSymbol: string): Promise<AnalysisPayload>
     low52: technicals.low52 ?? undefined,
     high52: technicals.high52 ?? undefined,
     discountScore: scoreDiscount(technicals) ?? undefined,
+    qualityScore: quality?.score ?? undefined,
+    nextEarnings: fundamentals?.nextEarnings ?? undefined,
   }
 
   return {
@@ -88,6 +99,8 @@ export async function analyzeSymbol(rawSymbol: string): Promise<AnalysisPayload>
     dte,
     context,
     technicals,
+    fundamentals,
+    quality,
     riskFreeRate: rate.rate,
     rateSource: rate.source,
     provider: provider.name,

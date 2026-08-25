@@ -12,70 +12,15 @@
  * dataset, which is why `pnpm check:provider` exists and why `suppliesIv` is false
  * here regardless of the field being present.
  *
- * Kept because spot price and the expiration calendar are still accurate and free,
- * and because the cookie/crumb handshake below is reusable for other Yahoo
- * endpoints (fundamentals, OHLCV) we will want later.
+ * Kept because spot price and the expiration calendar are still accurate and free.
+ * Note that Yahoo's OTHER endpoints are fine: price history (data/prices.ts) and
+ * fundamentals (data/fundamentals.ts) both return real values. The rot is specific
+ * to options.
  */
 
 import { withRetry } from '../pool'
 import type { OptionChain, OptionQuote, OptionsProvider } from '../types'
-
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-
-const SESSION_TTL_MS = 30 * 60 * 1000
-
-interface YahooSession {
-  cookie: string
-  crumb: string
-  fetchedAt: number
-}
-
-let session: YahooSession | null = null
-let inFlight: Promise<YahooSession> | null = null
-
-async function collectCookies(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,*/*' },
-    redirect: 'follow',
-  })
-  // fc.yahoo.com deliberately answers 404 while still setting the cookies we need,
-  // so status is irrelevant here — only Set-Cookie matters.
-  return (res.headers.getSetCookie?.() ?? [])
-    .map((c) => c.split(';')[0])
-    .filter(Boolean)
-    .join('; ')
-}
-
-async function establishSession(): Promise<YahooSession> {
-  const cookie = (await collectCookies('https://fc.yahoo.com/')) || (await collectCookies('https://finance.yahoo.com/'))
-  if (!cookie) throw new Error('yahoo: could not obtain session cookie')
-
-  const res = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
-    headers: { 'User-Agent': UA, Cookie: cookie, Accept: '*/*' },
-  })
-  const crumb = (await res.text()).trim()
-  if (!res.ok || !crumb || crumb.includes('<')) {
-    throw new Error(`yahoo: could not obtain crumb (http ${res.status})`)
-  }
-  return { cookie, crumb, fetchedAt: Date.now() }
-}
-
-async function getSession(force = false): Promise<YahooSession> {
-  if (!force && session && Date.now() - session.fetchedAt < SESSION_TTL_MS) return session
-  // Collapse concurrent refreshes so a burst of 401s triggers one handshake, not N.
-  if (!inFlight) {
-    inFlight = establishSession()
-      .then((s) => {
-        session = s
-        return s
-      })
-      .finally(() => {
-        inFlight = null
-      })
-  }
-  return inFlight
-}
+import { yahooGet } from '../yahoo-session'
 
 interface RawChainResponse {
   optionChain: {
@@ -103,22 +48,6 @@ interface RawOptionQuote {
   openInterest?: number
   volume?: number
   expiration: number
-}
-
-async function yahooGet<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const s = await getSession(attempt > 0)
-    // The crumb regularly contains URL-unsafe characters (a real one seen in
-    // development: `/fWCL.DwiF8`), so it must be encoded, not concatenated.
-    const qs = new URLSearchParams({ ...params, crumb: s.crumb })
-    const res = await fetch(`https://query2.finance.yahoo.com${path}?${qs}`, {
-      headers: { 'User-Agent': UA, Cookie: s.cookie, Accept: 'application/json' },
-    })
-    if (res.status === 401 && attempt === 0) continue // stale crumb → refresh once
-    if (!res.ok) throw new Error(`yahoo ${path} http ${res.status}`)
-    return (await res.json()) as T
-  }
-  throw new Error(`yahoo ${path}: crumb refresh did not resolve 401`)
 }
 
 const isoDate = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString().slice(0, 10)
@@ -166,7 +95,8 @@ export class YahooProvider implements OptionsProvider {
     const match = (meta.expirationDates ?? []).find((e) => isoDate(e) === expiry)
     if (!match) throw new Error(`yahoo: ${symbol} has no expiry ${expiry}`)
 
-    const result = isoDate(meta.options?.[0]?.expirationDate ?? 0) === expiry ? meta : await this.raw(symbol, match)
+    const result =
+      isoDate(meta.options?.[0]?.expirationDate ?? 0) === expiry ? meta : await this.raw(symbol, match)
     const slice = result.options?.[0]
 
     return {

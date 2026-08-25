@@ -27,6 +27,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
 const usd = (v: number) => `$${v.toFixed(2)}`
 
+function qualityColor(score: number): string {
+  if (score >= 65) return 'var(--tier-high)'
+  if (score >= 45) return 'var(--tier-mid)'
+  return 'var(--tier-low)'
+}
+
 /**
  * The single most important signal on the page.
  *
@@ -117,7 +123,7 @@ export default async function SymbolPage({ params }: Props) {
           'Trading above a falling long-term average, which is a bounce rather than an uptrend.'}
       </div>
 
-      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 mb-8">
+      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 mb-6">
         {stats.map((s) => (
           <div key={s.label} className="px-4 py-3" title={s.hint}>
             <dt className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-faint)' }}>
@@ -127,6 +133,82 @@ export default async function SymbolPage({ params }: Props) {
           </div>
         ))}
       </dl>
+
+      {data.quality && (
+        <div className="card p-5 md:p-6 mb-8">
+          <div className="flex items-baseline gap-3 mb-1 flex-wrap">
+            <h2 className="text-sm font-semibold">The business</h2>
+            {data.quality.score !== null && (
+              <span
+                className="nums text-sm font-semibold"
+                title="How this company scores on size, cash flow, balance sheet, growth and profitability"
+                style={{ color: qualityColor(data.quality.score) }}
+              >
+                {Math.round(data.quality.score)}
+                <span className="font-normal" style={{ color: 'var(--text-faint)' }}>
+                  /100
+                </span>
+              </span>
+            )}
+            {data.fundamentals?.nextEarnings && (
+              <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
+                Next earnings {data.fundamentals.nextEarnings}
+              </span>
+            )}
+          </div>
+          <p className="text-xs mb-4" style={{ color: 'var(--text-faint)' }}>
+            Selling a put is a commitment to buy, so this asks whether you would want the business at
+            all — separately from whether the price looks good.
+          </p>
+
+          {data.quality.failures.length > 0 && (
+            <div
+              className="rounded-lg border px-3 py-2 mb-4 text-[13px]"
+              style={{
+                background: 'var(--warn-bg)',
+                borderColor: 'var(--warn-border)',
+                color: 'var(--warn-text)',
+              }}
+            >
+              <span className="font-medium">Falls short of the quality floor:</span>{' '}
+              {data.quality.failures.join('; ')}.
+            </div>
+          )}
+
+          <div className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+            {data.quality.components.map((c) => (
+              <div key={c.key} className="flex items-baseline gap-2 text-xs">
+                <span className="w-24 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                  {c.label}
+                </span>
+                <span className="nums w-7 shrink-0 text-right">
+                  {c.score === null ? '—' : Math.round(c.score)}
+                </span>
+                <span
+                  className="h-1 rounded-full shrink-0 overflow-hidden"
+                  style={{ width: 40, background: 'var(--border)' }}
+                >
+                  <span
+                    className="block h-1 rounded-full"
+                    style={{
+                      width: `${c.score ?? 0}%`,
+                      background: c.score === null ? 'transparent' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+                <span style={{ color: 'var(--text-faint)' }}>{c.detail}</span>
+              </div>
+            ))}
+          </div>
+
+          {data.quality.unknowns.length > 0 && (
+            <p className="mt-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              Could not check: {data.quality.unknowns.join(', ')}. Missing data is reported as
+              unknown rather than counted as a failure.
+            </p>
+          )}
+        </div>
+      )}
 
       <Screen data={data} />
 

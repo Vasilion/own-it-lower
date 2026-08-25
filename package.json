@@ -12,7 +12,7 @@
     "db:studio": "drizzle-kit studio",
     "snapshot:iv": "tsx scripts/snapshot-iv.ts",
     "check:provider": "tsx scripts/check-provider.ts",
-    "rank": "tsx scripts/rank.ts"
+    "rank": "tsx --conditions=react-server scripts/rank.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
