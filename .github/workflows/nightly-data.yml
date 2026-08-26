@@ -33,13 +33,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose. Specifying one alongside the
+      # "packageManager" field in package.json makes the action abort with
+      # ERR_PNPM_BAD_PM_VERSION rather than pick a winner -- pnpm then never
+      # installs and every later step dies with exit 127. package.json is the
+      # single source of truth, so the action reads it.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
