@@ -28,6 +28,16 @@ frontend:
         - pnpm install --frozen-lockfile
     build:
       commands:
+        # Amplify exposes environment variables to the BUILD, but NOT to the SSR
+        # compute runtime. Writing them into .env.production is the documented way
+        # to carry them across -- without it, every server-rendered page that
+        # touches the database throws at request time even though the build went
+        # green. That is exactly how "DATABASE_URL is not set" appeared only after
+        # the screener stopped being prerendered.
+        #
+        # `|| true` because grep exits 1 when nothing matches, which would
+        # otherwise fail the build on a deployment that legitimately sets none.
+        - env | grep -E '^(DATABASE_URL|FRED_API_KEY|OPTIONS_PROVIDER|TRADIER_ACCESS_TOKEN|TRADIER_MODE|NEXT_PUBLIC_SITE_URL)=' >> .env.production || true
         - pnpm build
   artifacts:
     # For a Next.js SSR app Amplify reads the whole .next directory, including
