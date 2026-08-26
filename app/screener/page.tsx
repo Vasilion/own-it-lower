@@ -10,8 +10,19 @@ export const metadata: Metadata = {
     'Quality large-caps ranked by how much they look like a business worth owning that has pulled back to support with elevated option premium.',
 }
 
-// The underlying scan runs nightly, so anything shorter just re-queries the same rows.
-export const revalidate = 3600
+/*
+ * Rendered per request, not prerendered.
+ *
+ * ISR was wrong here. The page was baked at BUILD time and served with
+ * `stale-while-revalidate=31532400` -- a year -- so CloudFront kept returning the
+ * build artifact and the screener showed the previous day's scan long after the
+ * nightly job had written a new one. A data product displaying yesterday's date
+ * under today's heading is a trust problem, not a performance trade-off.
+ *
+ * The cost is one indexed Neon read per request, which is far cheaper than the
+ * live option-chain fetch /put/[symbol] already does on every hit.
+ */
+export const dynamic = 'force-dynamic'
 
 function formatDate(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`)

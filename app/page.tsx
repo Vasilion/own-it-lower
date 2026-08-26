@@ -3,8 +3,19 @@ import Link from 'next/link'
 import SymbolSearch from '@/components/SymbolSearch'
 import { getLatestScreen } from '@/lib/server/screener'
 
-// The preview reads the nightly scan, which changes once a day.
-export const revalidate = 3600
+/*
+ * Rendered per request, not prerendered.
+ *
+ * ISR was wrong here. The page was baked at BUILD time and served with
+ * `stale-while-revalidate=31532400` -- a year -- so CloudFront kept returning the
+ * build artifact and the screener showed the previous day's scan long after the
+ * nightly job had written a new one. A data product displaying yesterday's date
+ * under today's heading is a trust problem, not a performance trade-off.
+ *
+ * The cost is one indexed Neon read per request, which is far cheaper than the
+ * live option-chain fetch /put/[symbol] already does on every hit.
+ */
+export const dynamic = 'force-dynamic'
 
 const num = (v: number | null) => (v === null ? '—' : String(Math.round(v)))
 const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toFixed(1)}%`)
