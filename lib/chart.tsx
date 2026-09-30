@@ -21,9 +21,13 @@ const PLOT_LEFT: number = PAD
 const PLOT_RIGHT: number = 1096
 const AXIS_LEFT: number = 1106
 const PRICE_TOP: number = 132
-const PRICE_BOTTOM: number = 486
-const RSI_TOP: number = 510
-const RSI_BOTTOM: number = 598
+
+type Layout = { height: number; priceBottom: number; rsiTop: number; rsiBottom: number }
+
+function layoutFor(height: number): Layout {
+  const shrink: number = CHART_SIZE.height - height
+  return { height, priceBottom: 486 - shrink, rsiTop: 510 - shrink, rsiBottom: 598 - shrink }
+}
 const PROFILE_WIDTH: number = 150
 
 export type ChartBar = { open: number; high: number; low: number; close: number; time: number }
@@ -156,7 +160,11 @@ function Mark({ size }: { size: number }): ReactElement {
   )
 }
 
-export function Chart({ model }: { model: ChartModel }): ReactElement {
+export function Chart({ model, height = CHART_SIZE.height }: { model: ChartModel; height?: number }): ReactElement {
+  const L: Layout = layoutFor(height)
+  const PRICE_BOTTOM: number = L.priceBottom
+  const RSI_TOP: number = L.rsiTop
+  const RSI_BOTTOM: number = L.rsiBottom
   const bars: ChartBar[] = model.bars
   const n: number = bars.length
   const t: Technicals = model.technicals
@@ -241,7 +249,7 @@ export function Chart({ model }: { model: ChartModel }): ReactElement {
         ) : null}
       </div>
 
-      <svg width={CHART_SIZE.width} height={CHART_SIZE.height} viewBox={`0 0 ${CHART_SIZE.width} ${CHART_SIZE.height}`} style={{ position: 'absolute', top: 0, left: 0 }}>
+      <svg width={CHART_SIZE.width} height={L.height} viewBox={`0 0 ${CHART_SIZE.width} ${L.height}`} style={{ position: 'absolute', top: 0, left: 0 }}>
         <rect x={PLOT_LEFT} y={PRICE_TOP} width={plotWidth} height={PRICE_BOTTOM - PRICE_TOP} fill={PANEL} />
         <rect x={PLOT_LEFT} y={RSI_TOP} width={plotWidth} height={RSI_BOTTOM - RSI_TOP} fill={PANEL} />
         {ticks.map((p: number): ReactElement => (
