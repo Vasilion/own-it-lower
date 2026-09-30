@@ -24,7 +24,7 @@ export interface PriceHistory {
    * Full OHLCV bars aligned to `closes`. Needed for the volume profile, which
    * spreads each day's volume across its high-low range.
    */
-  bars: Array<{ high: number; low: number; close: number; volume: number }>
+  bars: Array<{ open: number; high: number; low: number; close: number; volume: number; time: number }>
   /** Unix seconds aligned to `closes`. */
   timestamps: number[]
   /** Latest regular-market price from the response metadata. */
@@ -38,6 +38,7 @@ interface RawChart {
       timestamp?: number[]
       indicators?: {
         quote?: Array<{
+          open?: Array<number | null>
           close?: Array<number | null>
           high?: Array<number | null>
           low?: Array<number | null>
@@ -76,6 +77,7 @@ export async function fetchPriceHistory(symbol: string, range = '1y'): Promise<P
 
   const quote = result.indicators?.quote?.[0]
   const rawCloses = quote?.close ?? []
+  const rawOpens = quote?.open ?? []
   const rawHighs = quote?.high ?? []
   const rawLows = quote?.low ?? []
   const rawVolumes = quote?.volume ?? []
@@ -96,10 +98,18 @@ export async function fetchPriceHistory(symbol: string, range = '1y'): Promise<P
     const h = rawHighs[i]
     const l = rawLows[i]
     const v = rawVolumes[i]
+    const o = rawOpens[i]
     // A bar missing high/low/volume is unusable for the profile but its close is
     // still fine for moving averages, so only the bar is skipped.
     if (typeof h === 'number' && typeof l === 'number' && typeof v === 'number' && v > 0) {
-      bars.push({ high: h, low: l, close: c, volume: v })
+      bars.push({
+        open: typeof o === 'number' && o > 0 ? o : c,
+        high: h,
+        low: l,
+        close: c,
+        volume: v,
+        time: rawStamps[i] ?? 0,
+      })
     }
   }
 
