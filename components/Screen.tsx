@@ -1,17 +1,75 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 
+import GlossaryList from '@/components/GlossaryList'
+import Term from '@/components/Term'
+import { KEYS, readLocal, writeLocal } from '@/lib/client/local'
 import { explainContract } from '@/lib/engine/explain'
 import { rankPuts, soleBlockers, tallyExclusions } from '@/lib/engine/fit'
-import { makePreset, type AssignmentStance, type StrategyPreset } from '@/lib/engine/types'
+import { makePreset, type AssignmentStance, type FitResult, type StrategyPreset } from '@/lib/engine/types'
 import { computeVolumeProfile } from '@/lib/engine/volume-profile'
 import VolumeProfilePanel from '@/components/VolumeProfilePanel'
+import type { GlossaryKey } from '@/lib/glossary'
 import type { AnalysisPayload } from '@/lib/server/analyze'
 
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
 const usd = (v: number) => `$${v.toFixed(2)}`
 const money = (v: number) => `$${Math.round(v).toLocaleString()}`
+
+function formatDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/** What the settings panel remembers between tickers, in this browser only. */
+interface SavedSettings {
+  stance: AssignmentStance
+  capital: number
+  maxPositionPct: number
+  minDte: number
+  maxDte: number
+  avoidEarnings: boolean
+  minIv: number
+  maxIv: number
+  lookback: number
+}
+
+const DEFAULTS: SavedSettings = {
+  stance: 'neutral',
+  // 0 means "no limit". A default figure here previously excluded every contract
+  // on any stock above roughly $125, so most symbols opened on an empty screen.
+  capital: 0,
+  maxPositionPct: 0.5,
+  minDte: 21,
+  maxDte: 49,
+  avoidEarnings: false,
+  minIv: 0,
+  maxIv: 0,
+  // 252 sessions is one year; shorter windows weight recent trading more heavily.
+  lookback: 252,
+}
+
+/** Stored values are untrusted: a hand-edited or older shape falls back per field. */
+function sanitize(raw: Partial<SavedSettings> | null): SavedSettings {
+  if (!raw || typeof raw !== 'object') return DEFAULTS
+  const n = (v: unknown, lo: number, hi: number, d: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : d
+  const minDte = n(raw.minDte, 7, 90, DEFAULTS.minDte)
+  return {
+    stance: raw.stance === 'want' || raw.stance === 'avoid' || raw.stance === 'neutral' ? raw.stance : DEFAULTS.stance,
+    capital: n(raw.capital, 0, 1e9, DEFAULTS.capital),
+    maxPositionPct: n(raw.maxPositionPct, 0.1, 1, DEFAULTS.maxPositionPct),
+    minDte,
+    maxDte: Math.max(minDte, n(raw.maxDte, 7, 90, DEFAULTS.maxDte)),
+    avoidEarnings: typeof raw.avoidEarnings === 'boolean' ? raw.avoidEarnings : DEFAULTS.avoidEarnings,
+    minIv: n(raw.minIv, 0, 500, DEFAULTS.minIv),
+    maxIv: n(raw.maxIv, 0, 500, DEFAULTS.maxIv),
+    lookback: [60, 130, 252].includes(raw.lookback as number) ? (raw.lookback as number) : DEFAULTS.lookback,
+  }
+}
 
 /**
  * Colour tier for the fit score.
@@ -47,18 +105,28 @@ type SortKey =
   | 'spreadPct'
   | 'impliedVolatility'
 
-const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; hint?: string }> = [
-  { key: 'fitScore', label: 'Fit', hint: 'How closely this contract matches the settings you chose' },
-  { key: 'strike', label: 'Strike', align: 'right' },
-  { key: 'dte', label: 'Days', align: 'right' },
-  { key: 'delta', label: 'Delta', align: 'right', hint: 'Roughly the chance of being assigned' },
-  { key: 'premium', label: 'Credit', align: 'right', hint: 'Per share, using the bid — what a seller actually receives' },
-  { key: 'annualizedReturn', label: 'Annualised', align: 'right', hint: 'Return on collateral if it expires worthless, scaled to a year' },
-  { key: 'downsideBuffer', label: 'Buffer', align: 'right', hint: 'How far the stock can fall before break-even' },
-  { key: 'effectiveCostBasis', label: 'If assigned', align: 'right', hint: 'Your cost per share if the shares are put to you' },
-  { key: 'impliedVolatility', label: 'IV', align: 'right', hint: 'Implied volatility on this contract — what inflates the premium' },
-  { key: 'openInterest', label: 'OI', align: 'right' },
-  { key: 'spreadPct', label: 'Spread', align: 'right' },
+const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; term: GlossaryKey }> = [
+  { key: 'fitScore', label: 'Fit', term: 'fit' },
+  { key: 'strike', label: 'Strike', align: 'right', term: 'strike' },
+  { key: 'dte', label: 'Days', align: 'right', term: 'dte' },
+  { key: 'delta', label: 'Delta', align: 'right', term: 'delta' },
+  { key: 'premium', label: 'Credit', align: 'right', term: 'credit' },
+  { key: 'annualizedReturn', label: 'Annualised', align: 'right', term: 'annualised' },
+  { key: 'downsideBuffer', label: 'Buffer', align: 'right', term: 'buffer' },
+  { key: 'effectiveCostBasis', label: 'If assigned', align: 'right', term: 'ifAssigned' },
+  { key: 'impliedVolatility', label: 'IV', align: 'right', term: 'iv' },
+  { key: 'openInterest', label: 'OI', align: 'right', term: 'oi' },
+  { key: 'spreadPct', label: 'Spread', align: 'right', term: 'spread' },
+]
+
+const MOBILE_TERMS: Array<{ k: GlossaryKey; label: string }> = [
+  { k: 'fit', label: 'Fit (the big number)' },
+  { k: 'delta', label: 'Delta (Δ)' },
+  { k: 'credit', label: 'Credit' },
+  { k: 'annualised', label: 'Annual' },
+  { k: 'buffer', label: 'Buffer' },
+  { k: 'ifAssigned', label: 'Basis' },
+  { k: 'iv', label: 'IV' },
 ]
 
 const MOBILE_SORTS: Array<{ key: SortKey; label: string }> = [
@@ -72,22 +140,54 @@ const MOBILE_SORTS: Array<{ key: SortKey; label: string }> = [
 ]
 
 export default function Screen({ data }: { data: AnalysisPayload }) {
-  const [stance, setStance] = useState<AssignmentStance>('neutral')
-  // 0 means "no limit". A default figure here previously excluded every contract
-  // on any stock above roughly $125, so most symbols opened on an empty screen.
-  const [capital, setCapital] = useState(0)
-  const [maxPositionPct, setMaxPositionPct] = useState(0.5)
-  const [minDte, setMinDte] = useState(21)
-  const [maxDte, setMaxDte] = useState(49)
-  const [avoidEarnings, setAvoidEarnings] = useState(false)
-  const [minIv, setMinIv] = useState(0)
-  const [maxIv, setMaxIv] = useState(0)
+  const [stance, setStance] = useState<AssignmentStance>(DEFAULTS.stance)
+  const [capital, setCapital] = useState(DEFAULTS.capital)
+  const [maxPositionPct, setMaxPositionPct] = useState(DEFAULTS.maxPositionPct)
+  const [minDte, setMinDte] = useState(DEFAULTS.minDte)
+  const [maxDte, setMaxDte] = useState(DEFAULTS.maxDte)
+  const [avoidEarnings, setAvoidEarnings] = useState(DEFAULTS.avoidEarnings)
+  const [minIv, setMinIv] = useState(DEFAULTS.minIv)
+  const [maxIv, setMaxIv] = useState(DEFAULTS.maxIv)
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fitScore', dir: 'desc' })
   const [expanded, setExpanded] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  // Visible-range equivalent. 252 sessions is one year; shorter windows weight
-  // recent trading more heavily.
-  const [lookback, setLookback] = useState(252)
+  const [lookback, setLookback] = useState(DEFAULTS.lookback)
+
+  /*
+   * Settings carry over from ticker to ticker. Before this, every symbol opened on
+   * defaults, so comparing two names meant re-entering stance and capital each time.
+   * Loaded after mount so the server render and first client render still agree;
+   * nothing is written until the stored value has been read.
+   */
+  const [loaded, setLoaded] = useState(false)
+  useEffect(() => {
+    apply(sanitize(readLocal<Partial<SavedSettings> | null>(KEYS.settings, null)))
+    setLoaded(true)
+  }, [])
+
+  useEffect(() => {
+    if (!loaded) return
+    writeLocal<SavedSettings>(KEYS.settings, {
+      stance, capital, maxPositionPct, minDte, maxDte, avoidEarnings, minIv, maxIv, lookback,
+    })
+  }, [loaded, stance, capital, maxPositionPct, minDte, maxDte, avoidEarnings, minIv, maxIv, lookback])
+
+  function apply(v: SavedSettings) {
+    setStance(v.stance)
+    setCapital(v.capital)
+    setMaxPositionPct(v.maxPositionPct)
+    setMinDte(v.minDte)
+    setMaxDte(v.maxDte)
+    setAvoidEarnings(v.avoidEarnings)
+    setMinIv(v.minIv)
+    setMaxIv(v.maxIv)
+    setLookback(v.lookback)
+  }
+
+  const isDefault =
+    stance === DEFAULTS.stance && capital === DEFAULTS.capital && maxPositionPct === DEFAULTS.maxPositionPct &&
+    minDte === DEFAULTS.minDte && maxDte === DEFAULTS.maxDte && avoidEarnings === DEFAULTS.avoidEarnings &&
+    minIv === DEFAULTS.minIv && maxIv === DEFAULTS.maxIv
 
   const preset: StrategyPreset = useMemo(
     () =>
@@ -194,9 +294,22 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
         </button>
 
         <div className={`${settingsOpen ? 'block' : 'hidden'} lg:block p-4 sm:p-5 lg:pt-5 pt-0`}>
-          <h2 className="text-sm font-semibold mb-1 hidden lg:block">Screen settings</h2>
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold mb-1 hidden lg:block">Screen settings</h2>
+            {!isDefault && (
+              <button
+                type="button"
+                onClick={() => apply({ ...DEFAULTS, lookback })}
+                className="text-[11px] underline underline-offset-2 ml-auto"
+                style={{ color: 'var(--text-faint)' }}
+              >
+                Reset
+              </button>
+            )}
+          </div>
           <p className="text-xs mb-4" style={{ color: 'var(--text-faint)' }}>
-            Filter parameters, not a risk profile. Nothing here is stored.
+            Filter settings, not a risk profile. Remembered in this browser so they carry over to the
+            next ticker. Nothing is sent anywhere.
           </p>
 
           <fieldset className="mb-5">
@@ -355,17 +468,26 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
       </aside>
 
       {/* ---------------- Results ---------------- */}
-      <section>
-        <div className="mb-4">
-          <VolumeProfilePanel
-            profile={volumeProfile}
+      <section className="min-w-0">
+        {ranked.length > 0 && (
+          <TopFit
+            r={ranked[0]}
+            symbol={data.symbol}
             spot={data.spot}
-            strikes={ranked.slice(0, 8).map((r) => r.metrics.breakeven)}
-            lookback={lookback}
-            onLookbackChange={setLookback}
+            sma200={data.context.sma200 ?? null}
+            onShowMaths={() => {
+              const m = ranked[0].metrics
+              const id = `${m.strike}-${m.expiry}`
+              setSort({ key: 'fitScore', dir: 'desc' })
+              setExpanded(id)
+              requestAnimationFrame(() =>
+                document.getElementById('contracts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+              )
+            }}
           />
-        </div>
+        )}
 
+        <div id="contracts" className="scroll-mt-28" />
         <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
             <span className="font-medium" style={{ color: 'var(--text)' }}>
@@ -461,13 +583,12 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
                         key={c.key}
                         data-sortable
                         onClick={() => toggleSort(c.key)}
-                        title={c.hint}
                         className={`px-3 py-2.5 font-medium whitespace-nowrap ${
                           c.align === 'right' ? 'text-right' : 'text-left'
                         }`}
                         style={{ color: sort.key === c.key ? 'var(--text)' : 'var(--text-muted)' }}
                       >
-                        {c.label}
+                        <Term k={c.term}>{c.label}</Term>
                         <span className="ml-1 text-[10px]">
                           {sort.key === c.key ? (sort.dir === 'desc' ? '▼' : '▲') : ''}
                         </span>
@@ -555,7 +676,111 @@ export default function Screen({ data }: { data: AnalysisPayload }) {
           Credit uses the bid, not the mid — that is what a seller actually receives. Tap any
           contract for the full arithmetic.
         </p>
+
+        <GlossaryList items={MOBILE_TERMS} className="md:hidden mt-4" />
+
+        <div className="mt-6">
+          <VolumeProfilePanel
+            profile={volumeProfile}
+            spot={data.spot}
+            strikes={ranked.slice(0, 8).map((r) => r.metrics.breakeven)}
+            lookback={lookback}
+            onLookbackChange={setLookback}
+          />
+        </div>
       </section>
+    </div>
+  )
+}
+
+/**
+ * The answer first: the contract at the top of the ranking, with both outcomes in
+ * plain words.
+ *
+ * Worded as "closest to your settings", never "best": the ranking is a match to
+ * filters the user chose, and the card must read as arithmetic, not a pick. The
+ * two outcomes are the question a first-time put seller actually has, and every
+ * figure in them is the same one the table shows.
+ */
+function TopFit({
+  r,
+  symbol,
+  spot,
+  sma200,
+  onShowMaths,
+}: {
+  r: FitResult
+  symbol: string
+  spot: number
+  sma200: number | null
+  onShowMaths: () => void
+}) {
+  const m = r.metrics
+  const t = tier(r.fitScore)
+  const below = spot > 0 ? (spot - m.effectiveCostBasis) / spot : null
+  const vs200 = sma200 ? (m.effectiveCostBasis - sma200) / sma200 : null
+
+  return (
+    <div className="card p-4 sm:p-5 mb-5" style={{ borderColor: 'var(--accent-dim)' }}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow mb-1">Closest fit to your settings</p>
+          <p className="text-lg sm:text-xl font-semibold nums">
+            {usd(m.strike)} put · {formatDate(m.expiry)}
+            <span className="text-[13px] font-normal ml-2" style={{ color: 'var(--text-faint)' }}>
+              {m.dte} days · {m.delta.toFixed(2)} delta
+            </span>
+          </p>
+        </div>
+        <span className="nums font-semibold text-3xl leading-none shrink-0" style={{ color: t.color }} title={t.label}>
+          {Math.round(r.fitScore)}
+        </span>
+      </div>
+
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+        <MStat label="You collect" value={`${usd(m.premium)}/sh · ${money(m.premium * 100)}`} emphasis />
+        <MStat label="Annualised" value={pct(m.annualizedReturn)} />
+        <MStat label="Cash set aside" value={money(m.collateral)} />
+        <MStat label="If assigned" value={`${usd(m.effectiveCostBasis)}/sh`} />
+      </dl>
+
+      <div className="grid gap-2 sm:grid-cols-2 mt-4 text-[13px] leading-relaxed">
+        <div className="rounded-lg px-3 py-2.5" style={{ background: 'var(--bg-sunken)' }}>
+          <span className="font-medium">If {symbol} stays above {usd(m.strike)}</span>
+          <span style={{ color: 'var(--text-muted)' }}>
+            {' '}on {formatDate(m.expiry)}, the put expires. You keep {money(m.premium * 100)} and the{' '}
+            {money(m.collateral)} is free again.
+          </span>
+        </div>
+        <div className="rounded-lg px-3 py-2.5" style={{ background: 'var(--bg-sunken)' }}>
+          <span className="font-medium">If it closes below {usd(m.strike)}</span>
+          <span style={{ color: 'var(--text-muted)' }}>
+            , you buy 100 shares at {usd(m.strike)}. Counting the premium that is {usd(m.effectiveCostBasis)} a
+            share{below !== null ? `, ${pct(below)} below today’s ${usd(spot)}` : ''}
+            {vs200 !== null ? ` and ${pct(Math.abs(vs200))} ${vs200 <= 0 ? 'below' : 'above'} the 200-day average` : ''}.
+          </span>
+        </div>
+      </div>
+
+      {m.earningsBeforeExpiry === true && (
+        <p className="mt-3 text-[12px]" style={{ color: 'var(--warn-text)' }}>
+          Earnings land before this expiry, so the stock can move sharply while the put is open.
+        </p>
+      )}
+
+      <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+          Ranked by fit to the settings you chose. A match to your filters, not a recommendation.
+        </p>
+        <button
+          type="button"
+          onClick={onShowMaths}
+          className="text-[12px] underline underline-offset-2"
+          style={{ color: 'var(--accent)' }}
+        >
+          Show the maths and every other match
+        </button>
+      </div>
     </div>
   )
 }

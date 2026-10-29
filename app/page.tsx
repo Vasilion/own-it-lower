@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import SymbolSearch from '@/components/SymbolSearch'
+import YourTickers from '@/components/YourTickers'
 import { getLatestScreen } from '@/lib/server/screener'
 
 /*
@@ -86,7 +87,6 @@ export default async function Home() {
               <li key={r.symbol} className="border-b hairline last:border-0">
                 <Link
                   href={`/put/${r.symbol}`}
-                  prefetch
                   className="flex items-center gap-3 sm:gap-4 px-4 py-3 hover:opacity-80 transition-opacity"
                 >
                   <span
@@ -95,15 +95,20 @@ export default async function Home() {
                   >
                     {num(r.setupScore)}
                   </span>
-                  <span className="font-medium w-16 shrink-0">{r.symbol}</span>
-                  <span
-                    className="text-[12px] hidden sm:block flex-1"
-                    style={{ color: 'var(--text-faint)' }}
-                  >
-                    {TREND_CHIP[r.trend ?? ''] ?? '—'}
-                    {r.qualityScore !== null ? ` · quality ${num(r.qualityScore)}` : ''}
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">{r.symbol}</span>
+                    {r.name && (
+                      <span className="text-[12px] ml-2 truncate" style={{ color: 'var(--text-muted)' }}>
+                        {r.name}
+                      </span>
+                    )}
+                    <span className="block text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                      {TREND_CHIP[r.trend ?? ''] ?? '—'}
+                      {r.qualityScore !== null ? ` · quality ${num(r.qualityScore)}` : ''}
+                      {r.forwardPe !== null ? ` · fwd P/E ${r.forwardPe.toFixed(1)}` : ''}
+                    </span>
                   </span>
-                  <span className="nums text-[13px] ml-auto sm:ml-0 shrink-0">
+                  <span className="nums text-[13px] shrink-0">
                     {pct(r.bestAnnualized)}
                   </span>
                   <span className="text-[11px] shrink-0" style={{ color: 'var(--text-faint)' }}>
@@ -119,10 +124,12 @@ export default async function Home() {
         </div>
       )}
 
+      <YourTickers />
+
       {/* Secondary: for people who already know the ticker they want. */}
       <div className="mt-10 pt-8 border-t hairline">
         <p className="text-[13px] mb-3" style={{ color: 'var(--text-muted)' }}>
-          Already know the ticker?
+          Already know the company? Search by ticker or name.
         </p>
         <div className="max-w-md">
           <SymbolSearch />

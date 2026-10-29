@@ -1,21 +1,26 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-import type { ScreenerRow } from '@/db/schema'
+import GlossaryList from '@/components/GlossaryList'
+import Term from '@/components/Term'
+import { KEYS, readLocal, useWatchlist, writeLocal } from '@/lib/client/local'
 import { TREND_LABEL, type TrendState } from '@/lib/engine/technicals'
+import type { GlossaryKey } from '@/lib/glossary'
+import type { ScreenRow } from '@/lib/server/screener'
 
 const pct = (v: number | null, d = 1) => (v === null ? '—' : `${(v * 100).toFixed(d)}%`)
 const money = (v: number | null) => (v === null ? '—' : `$${Math.round(v).toLocaleString()}`)
 const num = (v: number | null) => (v === null ? '—' : String(Math.round(v)))
+const ratio = (v: number | null) => (v === null ? '—' : v.toFixed(1))
 
 /**
  * IV/HV is the one column where a HIGH number is not automatically good.
  *
  * Above roughly 1.6 usually means an event is priced in, so the premium is
  * compensation for a known risk rather than an edge. Amber marks that rather than
- * green, and the tooltip says why.
+ * green, and the definition says why.
  */
 function ivToHvColor(ratio: number | null): string {
   if (ratio === null) return 'var(--tier-none)'
@@ -44,7 +49,7 @@ function tierColor(score: number | null): string {
  * component should not look identical to a 92 built from three -- that is the same
  * honesty the IV Rank window label exists for.
  */
-function abstainedWeight(r: ScreenerRow): number {
+function abstainedWeight(r: ScreenRow): number {
   return (
     (r.qualityScore === null ? 0.3 : 0) +
     (r.discountScore === null ? 0.4 : 0) +
@@ -54,6 +59,9 @@ function abstainedWeight(r: ScreenerRow): number {
 
 /** Above this, the score is flagged as resting on partial evidence. */
 const THIN_SCORE_THRESHOLD = 0.5
+
+/** Rows rendered before "Show all". The full set is still filtered and sorted. */
+const PAGE = 50
 
 /** Short trend chips. The full sentence lives on the symbol page. */
 const TREND_CHIP: Record<TrendState, string> = {
@@ -69,6 +77,8 @@ type SortKey =
   | 'setupScore'
   | 'qualityScore'
   | 'discountScore'
+  | 'trailingPe'
+  | 'forwardPe'
   | 'ivRank'
   | 'atmIv'
   | 'ivToHv'
@@ -76,40 +86,98 @@ type SortKey =
   | 'bestCollateral'
   | 'symbol'
 
-const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; hint?: string }> = [
-  { key: 'setupScore', label: 'Setup', hint: 'Quality, discount and IV rank combined — how much this is worth a look today' },
-  { key: 'symbol', label: 'Symbol' },
-  { key: 'qualityScore', label: 'Quality', align: 'right', hint: 'Size, cash flow, balance sheet, growth, profitability' },
-  { key: 'discountScore', label: 'Discount', align: 'right', hint: 'How much this looks like quality on sale rather than a breakdown' },
-  { key: 'atmIv', label: 'IV', align: 'right', hint: 'At-the-money implied volatility, about 30 days out' },
-  { key: 'ivToHv', label: 'IV/HV', align: 'right', hint: 'Implied divided by realised volatility. Above 1 means options are priced for more movement than the stock has actually delivered.' },
-  { key: 'ivRank', label: 'IV Rank', align: 'right', hint: 'Where IV sits against this stock’s own year of history — needs 40 daily observations before it can be computed' },
-  { key: 'bestAnnualized', label: 'Annualised', align: 'right', hint: 'From a representative 30-delta put — an illustration, not a recommendation' },
-  { key: 'bestCollateral', label: 'Collateral', align: 'right', hint: 'Cash that representative contract would tie up' },
+/** Valuation reads naturally low-to-high, so those columns sort ascending first. */
+const ASC_FIRST: SortKey[] = ['trailingPe', 'forwardPe', 'bestCollateral', 'symbol']
+
+const COLUMNS: Array<{ key: SortKey; label: string; align?: 'right'; term?: GlossaryKey }> = [
+  { key: 'setupScore', label: 'Setup', term: 'setup' },
+  { key: 'symbol', label: 'Company' },
+  { key: 'qualityScore', label: 'Quality', align: 'right', term: 'quality' },
+  { key: 'discountScore', label: 'Discount', align: 'right', term: 'discount' },
+  { key: 'trailingPe', label: 'P/E', align: 'right', term: 'pe' },
+  { key: 'forwardPe', label: 'Fwd P/E', align: 'right', term: 'forwardPe' },
+  { key: 'atmIv', label: 'IV', align: 'right', term: 'iv' },
+  { key: 'ivToHv', label: 'IV/HV', align: 'right', term: 'ivHv' },
+  { key: 'ivRank', label: 'IV Rank', align: 'right', term: 'ivRank' },
+  { key: 'bestAnnualized', label: 'Annualised', align: 'right', term: 'annualised' },
+  { key: 'bestCollateral', label: 'Collateral', align: 'right', term: 'collateral' },
 ]
 
 /** Sort options offered on mobile, where table headers are not available to click. */
 const MOBILE_SORTS: Array<{ key: SortKey; label: string }> = [
   { key: 'setupScore', label: 'Setup score' },
   { key: 'bestAnnualized', label: 'Annualised return' },
+  { key: 'forwardPe', label: 'Forward P/E (low first)' },
+  { key: 'trailingPe', label: 'P/E (low first)' },
   { key: 'qualityScore', label: 'Quality' },
   { key: 'discountScore', label: 'Discount' },
   { key: 'ivToHv', label: 'IV vs realised' },
-  { key: 'bestCollateral', label: 'Collateral' },
+  { key: 'bestCollateral', label: 'Collateral (low first)' },
   { key: 'symbol', label: 'Symbol' },
 ]
 
-export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'setupScore', dir: 'desc' })
-  const [maxCollateral, setMaxCollateral] = useState(0)
+const MOBILE_TERMS: Array<{ k: GlossaryKey; label: string }> = [
+  { k: 'setup', label: 'Setup (the big number)' },
+  { k: 'quality', label: 'Quality' },
+  { k: 'forwardPe', label: 'Fwd P/E' },
+  { k: 'annualised', label: 'Annual' },
+  { k: 'collateral', label: 'Collateral' },
+]
+
+interface Filters {
+  maxCollateral: number
+  minAnnualized: number
+  maxForwardPe: number
+  pullbacksOnly: boolean
+  hideDisqualified: boolean
+  watchOnly: boolean
+  sector: string
+  sort: { key: SortKey; dir: 'asc' | 'desc' }
+}
+
+const DEFAULT_FILTERS: Filters = {
+  maxCollateral: 0,
   // The setup score judges the STOCK, not the contract, so a fine setup can sit on
   // negligible premium -- HYG ranked second at 92 while paying 2.2% annualised.
-  // The column shows it, but the user should not have to catch that by eye.
-  const [minAnnualized, setMinAnnualized] = useState(0)
-  const [pullbacksOnly, setPullbacksOnly] = useState(false)
-  const [hideDisqualified, setHideDisqualified] = useState(true)
-  const [sector, setSector] = useState('all')
+  minAnnualized: 0,
+  maxForwardPe: 0,
+  pullbacksOnly: false,
+  hideDisqualified: true,
+  watchOnly: false,
+  sector: 'all',
+  sort: { key: 'setupScore', dir: 'desc' },
+}
+
+export default function ScreenerTable({ rows }: { rows: ScreenRow[] }) {
+  /*
+   * Filters are remembered in this browser, so opening a ticker and coming back
+   * lands on the same screen rather than a reset one. Loaded after mount to keep
+   * the server and first client render identical.
+   */
+  const [f, setF] = useState<Filters>(DEFAULT_FILTERS)
+  const [loaded, setLoaded] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [showAll, setShowAll] = useState(false)
+  const watch = useWatchlist()
+
+  useEffect(() => {
+    const saved = readLocal<Partial<Filters> | null>(KEYS.screener, null)
+    if (saved && typeof saved === 'object') {
+      const sortOk =
+        saved.sort && COLUMNS.some((c) => c.key === saved.sort!.key) && /^(asc|desc)$/.test(saved.sort.dir)
+      setF({ ...DEFAULT_FILTERS, ...saved, sort: sortOk ? saved.sort! : DEFAULT_FILTERS.sort })
+    }
+    setLoaded(true)
+  }, [])
+
+  useEffect(() => {
+    if (loaded) writeLocal(KEYS.screener, f)
+  }, [f, loaded])
+
+  const set = (patch: Partial<Filters>) => {
+    setF((prev) => ({ ...prev, ...patch }))
+    setShowAll(false)
+  }
 
   const sectors = useMemo(
     () => [...new Set(rows.map((r) => r.sector).filter((s): s is string => Boolean(s)))].sort(),
@@ -118,40 +186,55 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
 
   const filtered = useMemo(() => {
     let out = rows
-    if (hideDisqualified) out = out.filter((r) => !r.qualityFailures)
-    if (pullbacksOnly) out = out.filter((r) => r.trend === 'uptrend_pullback' || r.trend === 'uptrend_deep')
-    if (sector !== 'all') out = out.filter((r) => r.sector === sector)
+    if (f.watchOnly) out = out.filter((r) => watch.list.includes(r.symbol))
+    if (f.hideDisqualified) out = out.filter((r) => !r.qualityFailures)
+    if (f.pullbacksOnly) out = out.filter((r) => r.trend === 'uptrend_pullback' || r.trend === 'uptrend_deep')
+    if (f.sector !== 'all') out = out.filter((r) => r.sector === f.sector)
     // Affordability is the filter that actually decides what a given account can
     // trade, and it is the one most screeners leave out entirely.
-    if (maxCollateral > 0) out = out.filter((r) => r.bestCollateral !== null && r.bestCollateral <= maxCollateral)
-    if (minAnnualized > 0) {
-      out = out.filter((r) => r.bestAnnualized !== null && r.bestAnnualized * 100 >= minAnnualized)
+    if (f.maxCollateral > 0) out = out.filter((r) => r.bestCollateral !== null && r.bestCollateral <= f.maxCollateral)
+    if (f.minAnnualized > 0) {
+      out = out.filter((r) => r.bestAnnualized !== null && r.bestAnnualized * 100 >= f.minAnnualized)
     }
+    // Unknown forward P/E (ETFs, loss-makers) is excluded rather than assumed cheap.
+    if (f.maxForwardPe > 0) out = out.filter((r) => r.forwardPe !== null && r.forwardPe <= f.maxForwardPe)
 
+    const { key, dir } = f.sort
     return [...out].sort((a, b) => {
-      if (sort.key === 'symbol') {
-        return sort.dir === 'desc' ? b.symbol.localeCompare(a.symbol) : a.symbol.localeCompare(b.symbol)
+      if (key === 'symbol') {
+        return dir === 'desc' ? b.symbol.localeCompare(a.symbol) : a.symbol.localeCompare(b.symbol)
       }
       // Nulls always sort last regardless of direction — a missing value is not a
       // low value, and letting it float to the top would bury the real answers.
-      const av = a[sort.key] as number | null
-      const bv = b[sort.key] as number | null
+      const av = a[key] as number | null
+      const bv = b[key] as number | null
       if (av === null && bv === null) return 0
       if (av === null) return 1
       if (bv === null) return -1
-      return sort.dir === 'desc' ? bv - av : av - bv
+      return dir === 'desc' ? bv - av : av - bv
     })
-  }, [rows, sort, maxCollateral, minAnnualized, pullbacksOnly, hideDisqualified, sector])
+  }, [rows, f, watch.list])
+
+  const visible = showAll ? filtered : filtered.slice(0, PAGE)
 
   const toggleSort = (key: SortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
+    set({
+      sort:
+        f.sort.key === key
+          ? { key, dir: f.sort.dir === 'desc' ? 'asc' : 'desc' }
+          : { key, dir: ASC_FIRST.includes(key) ? 'asc' : 'desc' },
+    })
 
   const activeFilters =
-    (maxCollateral > 0 ? 1 : 0) +
-    (minAnnualized > 0 ? 1 : 0) +
-    (pullbacksOnly ? 1 : 0) +
-    (sector !== 'all' ? 1 : 0) +
-    (hideDisqualified ? 1 : 0)
+    (f.maxCollateral > 0 ? 1 : 0) +
+    (f.minAnnualized > 0 ? 1 : 0) +
+    (f.maxForwardPe > 0 ? 1 : 0) +
+    (f.pullbacksOnly ? 1 : 0) +
+    (f.watchOnly ? 1 : 0) +
+    (f.sector !== 'all' ? 1 : 0) +
+    (f.hideDisqualified ? 1 : 0)
+
+  const isDefault = JSON.stringify(f) === JSON.stringify(DEFAULT_FILTERS)
 
   return (
     <>
@@ -176,47 +259,34 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
         <div
           className={`${filtersOpen ? 'block' : 'hidden'} sm:flex px-4 pb-4 sm:py-3 flex-wrap items-center gap-x-6 gap-y-3 text-[13px]`}
         >
-          <label className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
-            <span style={{ color: 'var(--text-muted)' }}>Collateral under</span>
-            <input
-              type="number"
-              value={maxCollateral || ''}
-              placeholder="any"
-              inputMode="numeric"
-              step={1000}
-              min={0}
-              onChange={(e) => setMaxCollateral(Math.max(0, Number(e.target.value) || 0))}
-              className="w-32 rounded-lg border px-2 py-1.5 nums bg-transparent text-right"
-              style={{ borderColor: 'var(--border)' }}
-            />
-          </label>
-
-          <label
-            className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto"
-            title="Filters on the representative 30-delta contract's annualised return"
-          >
-            <span style={{ color: 'var(--text-muted)' }}>Annualised over</span>
-            <span className="flex items-center gap-1">
-              <input
-                type="number"
-                value={minAnnualized || ''}
-                placeholder="any"
-                inputMode="numeric"
-                step={1}
-                min={0}
-                onChange={(e) => setMinAnnualized(Math.max(0, Number(e.target.value) || 0))}
-                className="w-20 rounded-lg border px-2 py-1.5 nums bg-transparent text-right"
-                style={{ borderColor: 'var(--border)' }}
-              />
-              <span style={{ color: 'var(--text-faint)' }}>%</span>
-            </span>
-          </label>
+          <NumberFilter
+            label="Collateral under"
+            value={f.maxCollateral}
+            step={1000}
+            width="w-28"
+            onChange={(v) => set({ maxCollateral: v })}
+          />
+          <NumberFilter
+            label="Annualised over"
+            suffix="%"
+            value={f.minAnnualized}
+            step={1}
+            width="w-16"
+            onChange={(v) => set({ minAnnualized: v })}
+          />
+          <NumberFilter
+            label="Fwd P/E under"
+            value={f.maxForwardPe}
+            step={1}
+            width="w-16"
+            onChange={(v) => set({ maxForwardPe: v })}
+          />
 
           <label className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
             <span style={{ color: 'var(--text-muted)' }}>Sector</span>
             <select
-              value={sector}
-              onChange={(e) => setSector(e.target.value)}
+              value={f.sector}
+              onChange={(e) => set({ sector: e.target.value })}
               className="rounded-lg border px-2 py-1.5 bg-transparent max-w-[200px]"
               style={{ borderColor: 'var(--border)' }}
             >
@@ -230,25 +300,36 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
           </label>
 
           <label className="flex items-center gap-2.5 w-full sm:w-auto">
-            <input type="checkbox" checked={pullbacksOnly} onChange={(e) => setPullbacksOnly(e.target.checked)} />
+            <input type="checkbox" checked={f.pullbacksOnly} onChange={(e) => set({ pullbacksOnly: e.target.checked })} />
             Pullbacks only
           </label>
 
           <label className="flex items-center gap-2.5 w-full sm:w-auto" title="Names failing the market cap, debt or cash flow floor">
             <input
               type="checkbox"
-              checked={hideDisqualified}
-              onChange={(e) => setHideDisqualified(e.target.checked)}
+              checked={f.hideDisqualified}
+              onChange={(e) => set({ hideDisqualified: e.target.checked })}
             />
             Hide below quality floor
+          </label>
+
+          <label className="flex items-center gap-2.5 w-full sm:w-auto">
+            <input type="checkbox" checked={f.watchOnly} onChange={(e) => set({ watchOnly: e.target.checked })} />
+            Watchlist only{' '}
+            <span className="nums" style={{ color: 'var(--text-faint)' }}>
+              ({watch.list.length})
+            </span>
           </label>
 
           {/* Table headers do the sorting on desktop; mobile needs an explicit control. */}
           <label className="flex items-center justify-between gap-2 w-full sm:hidden">
             <span style={{ color: 'var(--text-muted)' }}>Sort by</span>
             <select
-              value={sort.key}
-              onChange={(e) => setSort({ key: e.target.value as SortKey, dir: 'desc' })}
+              value={f.sort.key}
+              onChange={(e) => {
+                const key = e.target.value as SortKey
+                set({ sort: { key, dir: ASC_FIRST.includes(key) ? 'asc' : 'desc' } })
+              }}
               className="rounded-lg border px-2 py-1.5 bg-transparent"
               style={{ borderColor: 'var(--border)' }}
             >
@@ -260,38 +341,57 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
             </select>
           </label>
 
-          <span className="ml-auto nums hidden sm:block" style={{ color: 'var(--text-faint)' }}>
-            {filtered.length} of {rows.length}
+          <span className="ml-auto flex items-center gap-3">
+            {!isDefault && (
+              <button
+                type="button"
+                onClick={() => set(DEFAULT_FILTERS)}
+                className="text-[12px] underline underline-offset-2"
+                style={{ color: 'var(--text-faint)' }}
+              >
+                Reset
+              </button>
+            )}
+            <span className="nums hidden sm:block" style={{ color: 'var(--text-faint)' }}>
+              {filtered.length} of {rows.length}
+            </span>
           </span>
         </div>
       </div>
 
       {filtered.length === 0 ? (
         <div className="card p-6 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-          No symbols match these filters. Raising the collateral limit or turning off “pullbacks
-          only” is usually what opens it up.
+          {f.watchOnly && watch.list.length === 0
+            ? 'Your watchlist is empty. Open any ticker and tap Watch to add it; the list is kept in this browser.'
+            : 'No symbols match these filters. Raising the collateral limit or turning off “pullbacks only” is usually what opens it up.'}
         </div>
       ) : (
         <>
           {/* ---------- Mobile: cards ---------- */}
           <ul className="md:hidden space-y-2">
-            {filtered.map((r) => (
+            {visible.map((r) => (
               <li key={r.symbol}>
-                <Link
-                  href={`/put/${r.symbol}`}
-                  prefetch
-                  className="card card-interactive block p-4 active:opacity-80"
-                >
+                <Link href={`/put/${r.symbol}`} className="card card-interactive block p-4 active:opacity-80">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-[15px]">{r.symbol}</span>
+                        {watch.has(r.symbol) && (
+                          <span className="text-[12px]" style={{ color: 'var(--accent)' }} aria-label="On watchlist">
+                            ★
+                          </span>
+                        )}
                         {r.qualityFailures && (
                           <span className="text-[11px]" style={{ color: 'var(--warn-text)' }}>
                             ⚠
                           </span>
                         )}
                       </div>
+                      {r.name && (
+                        <div className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          {r.name}
+                        </div>
+                      )}
                       <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-faint)' }}>
                         {TREND_CHIP[(r.trend ?? 'unknown') as TrendState]}
                         {r.sector ? ` · ${r.sector}` : ''}
@@ -314,7 +414,7 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
 
                   <dl className="grid grid-cols-4 gap-2 mt-3 text-center">
                     <Stat label="Quality" value={num(r.qualityScore)} />
-                    <Stat label="IV/HV" value={r.ivToHv === null ? '—' : r.ivToHv.toFixed(2)} />
+                    <Stat label="Fwd P/E" value={ratio(r.forwardPe)} />
                     <Stat label="Annual" value={pct(r.bestAnnualized)} emphasis />
                     <Stat label="Collateral" value={money(r.bestCollateral)} />
                   </dl>
@@ -333,13 +433,12 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
                       key={c.key}
                       data-sortable
                       onClick={() => toggleSort(c.key)}
-                      title={c.hint}
                       className={`px-3 py-2.5 font-medium whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}
-                      style={{ color: sort.key === c.key ? 'var(--text)' : 'var(--text-muted)' }}
+                      style={{ color: f.sort.key === c.key ? 'var(--text)' : 'var(--text-muted)' }}
                     >
-                      {c.label}
+                      {c.term ? <Term k={c.term}>{c.label}</Term> : c.label}
                       <span className="ml-1 text-[10px]">
-                        {sort.key === c.key ? (sort.dir === 'desc' ? '▼' : '▲') : ''}
+                        {f.sort.key === c.key ? (f.sort.dir === 'desc' ? '▼' : '▲') : ''}
                       </span>
                     </th>
                   ))}
@@ -349,7 +448,7 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {visible.map((r) => (
                   <tr key={r.symbol} className="border-b hairline last:border-0">
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <span
@@ -369,22 +468,44 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Link
-                        href={`/put/${r.symbol}`}
-                        prefetch
-                        className="font-medium hover:underline underline-offset-2"
-                      >
-                        {r.symbol}
-                      </Link>
-                      {r.qualityFailures && (
-                        <span className="ml-2 text-[11px]" style={{ color: 'var(--warn-text)' }} title={r.qualityFailures}>
-                          ⚠
-                        </span>
+                    <td className="px-3 py-2 max-w-[220px]">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => watch.toggle(r.symbol)}
+                          aria-label={watch.has(r.symbol) ? `Remove ${r.symbol} from watchlist` : `Add ${r.symbol} to watchlist`}
+                          aria-pressed={watch.has(r.symbol)}
+                          className="text-[13px] leading-none"
+                          style={{ color: watch.has(r.symbol) ? 'var(--accent)' : 'var(--text-faint)' }}
+                        >
+                          {watch.has(r.symbol) ? '★' : '☆'}
+                        </button>
+                        <Link href={`/put/${r.symbol}`} className="font-medium hover:underline underline-offset-2">
+                          {r.symbol}
+                        </Link>
+                        {r.qualityFailures && (
+                          <span className="text-[11px]" style={{ color: 'var(--warn-text)' }} title={r.qualityFailures}>
+                            ⚠
+                          </span>
+                        )}
+                      </div>
+                      {r.name && (
+                        <Link
+                          href={`/put/${r.symbol}`}
+                          className="block text-[11px] truncate pl-5"
+                          style={{ color: 'var(--text-faint)' }}
+                          title={r.name}
+                        >
+                          {r.name}
+                        </Link>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right nums">{num(r.qualityScore)}</td>
                     <td className="px-3 py-2.5 text-right nums">{num(r.discountScore)}</td>
+                    <td className="px-3 py-2.5 text-right nums" style={{ color: 'var(--text-muted)' }}>
+                      {ratio(r.trailingPe)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right nums">{ratio(r.forwardPe)}</td>
                     <td className="px-3 py-2.5 text-right nums">{pct(r.atmIv, 0)}</td>
                     <td className="px-3 py-2.5 text-right nums" style={{ color: ivToHvColor(r.ivToHv) }}>
                       {r.ivToHv === null ? '—' : r.ivToHv.toFixed(2)}
@@ -418,8 +539,21 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
               </tbody>
             </table>
           </div>
+
+          {filtered.length > visible.length && (
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              className="mt-3 w-full card py-3 text-[13px]"
+              style={{ color: 'var(--accent)' }}
+            >
+              Show all {filtered.length}
+            </button>
+          )}
         </>
       )}
+
+      <GlossaryList items={MOBILE_TERMS} className="md:hidden mt-4" />
 
       <p className="mt-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
         Annualised and collateral come from a single representative 30-delta put, shown so the row
@@ -428,9 +562,46 @@ export default function ScreenerTable({ rows }: { rows: ScreenerRow[] }) {
         answers the related question today — above 1 means options are priced for more movement than
         the stock has actually delivered. A{' '}
         <span style={{ color: 'var(--text-muted)' }}>*</span> marks a setup score resting on partial
-        evidence — usually an ETF, which has no balance sheet to score.
+        evidence — usually an ETF, which has no balance sheet to score. Your filters and watchlist
+        are remembered in this browser only.
       </p>
     </>
+  )
+}
+
+function NumberFilter({
+  label,
+  value,
+  step,
+  width,
+  suffix,
+  onChange,
+}: {
+  label: string
+  value: number
+  step: number
+  width: string
+  suffix?: string
+  onChange: (v: number) => void
+}) {
+  return (
+    <label className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span className="flex items-center gap-1">
+        <input
+          type="number"
+          value={value || ''}
+          placeholder="any"
+          inputMode="numeric"
+          step={step}
+          min={0}
+          onChange={(e) => onChange(Math.max(0, Number(e.target.value) || 0))}
+          className={`${width} rounded-lg border px-2 py-1.5 nums bg-transparent text-right`}
+          style={{ borderColor: 'var(--border)' }}
+        />
+        {suffix && <span style={{ color: 'var(--text-faint)' }}>{suffix}</span>}
+      </span>
+    </label>
   )
 }
 
