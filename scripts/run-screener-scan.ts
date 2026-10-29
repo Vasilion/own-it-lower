@@ -137,7 +137,15 @@ async function scanSymbol(symbol: string, today: string, ivHistory: number[]): P
     symbol,
     snapshotDate: today,
     spot: data.spot,
-    sector: f?.sector ?? UNIVERSE.find((u) => u.symbol === symbol)?.sector ?? null,
+    // The universe list's GICS sector wins: Yahoo uses its own sector names
+    // ("Technology" vs "Information Technology"), and mixing the two would split
+    // the screener's sector filter.
+    sector: UNIVERSE.find((u) => u.symbol === symbol)?.sector ?? f?.sector ?? null,
+    name: f?.name ?? UNIVERSE.find((u) => u.symbol === symbol)?.name ?? null,
+    industry: f?.industry ?? null,
+    trailingPe: f?.trailingPe ?? null,
+    forwardPe: f?.forwardPe ?? null,
+    dividendYield: f?.dividendYield ?? null,
     setupScore: setup.score,
     qualityScore: data.quality?.score ?? null,
     discountScore: data.context.discountScore ?? null,
@@ -170,6 +178,11 @@ async function writeBatch(rows: ScanRow[]): Promise<void> {
       set: {
         spot: sql`excluded.spot`,
         sector: sql`excluded.sector`,
+        name: sql`excluded.name`,
+        industry: sql`excluded.industry`,
+        trailingPe: sql`excluded.trailing_pe`,
+        forwardPe: sql`excluded.forward_pe`,
+        dividendYield: sql`excluded.dividend_yield`,
         setupScore: sql`excluded.setup_score`,
         qualityScore: sql`excluded.quality_score`,
         discountScore: sql`excluded.discount_score`,

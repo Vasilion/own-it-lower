@@ -173,6 +173,10 @@ input[type='checkbox'] {
     height: 1.15rem;
     min-height: 0;
   }
+  /* Inline badges and glossary dots size their own hit area. */
+  .tap-compact {
+    min-height: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

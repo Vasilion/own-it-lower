@@ -121,6 +121,13 @@ export const screenerResults = pgTable(
 
     spot: real('spot').notNull(),
     sector: text('sector'),
+    /** Company or fund name, so the screener row says what the ticker is. */
+    name: text('name'),
+    industry: text('industry'),
+    /** Trailing and forward P/E. Null for losses and, on forward, for ETFs. */
+    trailingPe: real('trailing_pe'),
+    forwardPe: real('forward_pe'),
+    dividendYield: real('dividend_yield'),
 
     /** 0-100 composite: quality, discount, and IV rank when available. */
     setupScore: real('setup_score'),

@@ -3,6 +3,7 @@ import { Anton, Inter, JetBrains_Mono } from 'next/font/google'
 import Link from 'next/link'
 
 import InstallPrompt from '@/components/InstallPrompt'
+import SymbolSearch from '@/components/SymbolSearch'
 
 import './globals.css'
 
@@ -71,13 +72,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </Link>
               <Link
                 href="/screener"
-                className="text-[13px] whitespace-nowrap hover:underline underline-offset-4"
+                className="inline-flex items-center text-[13px] whitespace-nowrap hover:underline underline-offset-4"
                 style={{ color: 'var(--text-muted)' }}
               >
                 Screener
               </Link>
             </div>
-            <span className="eyebrow hidden md:block">15-min delayed · educational</span>
+            {/*
+              Search sits in the header on every page. Previously it lived only on
+              the home and ticker pages, so looking something up from the screener
+              meant a trip back home first.
+            */}
+            <div className="hidden sm:block flex-1 max-w-sm">
+              <SymbolSearch compact />
+            </div>
+            <span className="eyebrow hidden lg:block whitespace-nowrap">15-min delayed · educational</span>
+          </div>
+          <div className="sm:hidden px-4 pb-3">
+            <SymbolSearch compact />
           </div>
         </header>
 

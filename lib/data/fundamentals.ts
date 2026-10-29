@@ -15,7 +15,7 @@ import { raw, yahooGet } from './yahoo-session'
 const RATE_PER_MINUTE = 60
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
 
-const MODULES = 'financialData,defaultKeyStatistics,summaryDetail,calendarEvents,price'
+const MODULES = 'financialData,defaultKeyStatistics,summaryDetail,calendarEvents,price,assetProfile'
 
 const limiter = new RateLimiter(RATE_PER_MINUTE)
 const cache = new Map<string, { value: Fundamentals; fetchedAt: number }>()
@@ -42,6 +42,20 @@ export interface Fundamentals {
   /** Next scheduled earnings date, ISO. */
   nextEarnings: string | null
   sector: string | null
+  /** Company or fund name, e.g. "Apple Inc.". */
+  name: string | null
+  industry: string | null
+  /** 'EQUITY' or 'ETF'. ETFs have no forward P/E and no industry. */
+  quoteType: string | null
+  /** Yahoo's business description, untrimmed. The UI shortens it. */
+  summary: string | null
+  trailingPe: number | null
+  forwardPe: number | null
+  /**
+   * Dividend yield as a fraction. Stocks report it as dividendYield, funds as
+   * yield; one field here so the UI does not have to know which.
+   */
+  dividendYield: number | null
 }
 
 interface RawQuoteSummary {
@@ -51,6 +65,7 @@ interface RawQuoteSummary {
       defaultKeyStatistics?: Record<string, unknown>
       summaryDetail?: Record<string, unknown>
       price?: Record<string, unknown>
+      assetProfile?: Record<string, unknown>
       calendarEvents?: { earnings?: { earningsDate?: unknown[] } }
     }>
   }
@@ -92,6 +107,10 @@ export async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
   const fd = r.financialData ?? {}
   const sd = r.summaryDetail ?? {}
   const price = r.price ?? {}
+  const profile = r.assetProfile ?? {}
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  // A P/E of zero or below is not a valuation, it is a loss; show it as unknown.
+  const positive = (v: number | null) => (v !== null && v > 0 ? v : null)
 
   const debtToEquityPct = raw(fd.debtToEquity)
 
@@ -108,7 +127,16 @@ export async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
     returnOnEquity: raw(fd.returnOnEquity),
     currentRatio: raw(fd.currentRatio),
     nextEarnings: nextEarningsDate(r.calendarEvents?.earnings?.earningsDate),
-    sector: typeof price.sector === 'string' ? price.sector : null,
+    // `price` has no sector field; it lives on assetProfile. Reading it from
+    // price meant this was always null.
+    sector: str(profile.sector),
+    name: str(price.longName) ?? str(price.shortName),
+    industry: str(profile.industry),
+    quoteType: str(price.quoteType),
+    summary: str(profile.longBusinessSummary),
+    trailingPe: positive(raw(sd.trailingPE)),
+    forwardPe: positive(raw(sd.forwardPE) ?? raw(r.defaultKeyStatistics?.forwardPE)),
+    dividendYield: raw(sd.dividendYield) ?? raw(sd.yield),
   }
 
   cache.set(key, { value, fetchedAt: Date.now() })

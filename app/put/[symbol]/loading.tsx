@@ -8,23 +8,25 @@
  */
 export default function Loading() {
   return (
-    <div className="mx-auto max-w-6xl px-5 md:px-6 py-8 animate-pulse">
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-5 sm:py-7 animate-pulse">
+      <Block className="h-4 w-28 mb-5" />
       <div className="flex items-baseline gap-3 mb-2">
         <Block className="h-9 w-28" />
         <Block className="h-6 w-20" />
       </div>
-      <Block className="h-4 w-72 mb-6" />
+      <Block className="h-4 w-40 mb-2" />
+      <Block className="h-4 w-full max-w-2xl mb-4" />
 
-      <Block className="h-12 w-full rounded-xl mb-6" />
-
-      <div className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 mb-6">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 mb-4">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="px-4 py-3">
             <Block className="h-3 w-16 mb-2" />
             <Block className="h-4 w-20" />
           </div>
         ))}
       </div>
+
+      <Block className="h-12 w-full rounded-xl mb-6" />
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr] items-start">
         <div className="card p-5 md:p-6">

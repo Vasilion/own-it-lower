@@ -3,7 +3,9 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import Screen from '@/components/Screen'
-import SymbolSearch from '@/components/SymbolSearch'
+import Term from '@/components/Term'
+import WatchButton from '@/components/WatchButton'
+import { UNIVERSE } from '@/data/universe'
 import { TREND_LABEL, type TrendState } from '@/lib/engine/technicals'
 import { analyzeSymbol } from '@/lib/server/analyze'
 
@@ -32,6 +34,38 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
 const usd = (v: number) => `$${v.toFixed(2)}`
+
+function bigMoney(v: number | null): string {
+  if (v === null) return '—'
+  if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`
+  return `$${Math.round(v).toLocaleString()}`
+}
+
+const ratio = (v: number | null) => (v === null ? '—' : v.toFixed(1))
+
+/**
+ * First sentence of Yahoo's business description (two if the first is very short).
+ *
+ * Split only after a word of three or more lowercase letters so "Apple Inc. designs"
+ * and "Co. Ltd." do not end the sentence early.
+ */
+function shortSummary(text: string | null): { short: string; rest: string } | null {
+  if (!text) return null
+  const sentences = text.split(/(?<=[a-z]{3}\.)\s+(?=[A-Z])/)
+  let short = sentences[0]
+  let i = 1
+  while (i < sentences.length && short.length < 80) short += ` ${sentences[i++]}`
+  return { short, rest: sentences.slice(i).join(' ') }
+}
+
+function formatShortDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
 
 function qualityColor(score: number): string {
   if (score >= 65) return 'var(--tier-high)'
@@ -95,30 +129,99 @@ export default async function SymbolPage({ params }: Props) {
     },
   ]
 
+  const f = data.fundamentals
+  const name = f?.name ?? UNIVERSE.find((u) => u.symbol === data.symbol)?.name ?? null
+  const about = shortSummary(f?.summary ?? null)
+  const isEtf = f?.quoteType === 'ETF'
+
+  const valuation: Array<{ label: React.ReactNode; value: string; key: string }> = [
+    { key: 'cap', label: <Term k="marketCap">{isEtf ? 'Fund size' : 'Market cap'}</Term>, value: bigMoney(f?.marketCap ?? null) },
+    { key: 'pe', label: <Term k="pe">P/E</Term>, value: ratio(f?.trailingPe ?? null) },
+    ...(isEtf
+      ? []
+      : [{ key: 'fpe', label: <Term k="forwardPe">Forward P/E</Term>, value: ratio(f?.forwardPe ?? null) }]),
+    {
+      key: 'dy',
+      label: <Term k="dividendYield">Dividend yield</Term>,
+      value: f?.dividendYield ? pct(f.dividendYield, 2) : '—',
+    },
+    {
+      key: 'earn',
+      label: 'Next earnings',
+      value: f?.nextEarnings ? formatShortDate(f.nextEarnings) : '—',
+    },
+  ]
+
   return (
-    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8">
-      <div className="flex items-start justify-between gap-6 flex-wrap mb-6">
-        <div>
-          <div className="flex items-baseline gap-3">
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-5 sm:py-7">
+      <Link
+        href="/screener"
+        className="inline-block text-[13px] mb-4 hover:underline underline-offset-4"
+        style={{ color: 'var(--text-faint)' }}
+      >
+        &larr; Back to screener
+      </Link>
+
+      {/* ---- What this company is, before anything about its options. ---- */}
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-3 flex-wrap">
             <h1 className="font-display uppercase tracking-wide text-3xl sm:text-4xl">{data.symbol}</h1>
             <span className="nums text-xl" style={{ color: 'var(--text-muted)' }}>
               {usd(data.spot)}
             </span>
+            {data.quality?.score != null && (
+              <a
+                href="#business"
+                className="tap-compact nums text-[13px] rounded-md border px-2 py-0.5"
+                style={{ borderColor: 'var(--border)', color: qualityColor(data.quality.score) }}
+                title="Business quality score. Tap for the breakdown."
+              >
+                Quality {Math.round(data.quality.score)}
+              </a>
+            )}
           </div>
-          <p className="text-[13px] mt-1" style={{ color: 'var(--text-faint)' }}>
-            {data.puts.length} put contracts · delayed quotes via {data.provider} · fetched{' '}
-            {new Date(data.fetchedAt).toLocaleTimeString('en-US', {
-              hour: 'numeric',
-              minute: '2-digit',
-              timeZone: 'America/New_York',
-            })}{' '}
-            ET
-          </p>
+          {name && <p className="text-[15px] mt-1 font-medium">{name}</p>}
+          {(f?.sector || f?.industry || isEtf) && (
+            <p className="text-[13px] mt-0.5" style={{ color: 'var(--text-faint)' }}>
+              {isEtf ? 'Exchange-traded fund' : [f?.sector, f?.industry].filter(Boolean).join(' · ')}
+            </p>
+          )}
         </div>
-        <div className="w-full sm:w-72">
-          <SymbolSearch />
-        </div>
+        <WatchButton symbol={data.symbol} />
       </div>
+
+      {about && (
+        <details className="mb-4 max-w-3xl group">
+          <summary
+            className="text-[13px] leading-relaxed cursor-pointer list-none"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            {about.short}
+            {about.rest && (
+              <span className="ml-1 group-open:hidden" style={{ color: 'var(--accent)' }}>
+                More
+              </span>
+            )}
+          </summary>
+          {about.rest && (
+            <p className="text-[13px] leading-relaxed mt-2" style={{ color: 'var(--text-muted)' }}>
+              {about.rest}
+            </p>
+          )}
+        </details>
+      )}
+
+      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 mb-4">
+        {valuation.map((v) => (
+          <div key={v.key} className="px-4 py-3">
+            <dt className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-faint)' }}>
+              {v.label}
+            </dt>
+            <dd className="nums text-[15px] mt-0.5">{v.value}</dd>
+          </div>
+        ))}
+      </dl>
 
       <div
         className="rounded-xl border px-4 py-3 mb-6 text-[13px]"
@@ -140,7 +243,10 @@ export default async function SymbolPage({ params }: Props) {
           'Trading above a falling long-term average, which is a bounce rather than an uptrend.'}
       </div>
 
-      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 mb-6">
+      <Screen data={data} />
+
+      <h2 className="text-sm font-semibold mt-10 mb-3">Price and trend</h2>
+      <dl className="card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
         {stats.map((s) => (
           <div key={s.label} className="px-4 py-3" title={s.hint}>
             <dt className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-faint)' }}>
@@ -152,7 +258,7 @@ export default async function SymbolPage({ params }: Props) {
       </dl>
 
       {data.quality && (
-        <div className="card p-5 md:p-6 mb-8">
+        <div id="business" className="card p-5 md:p-6 mt-6 scroll-mt-28">
           <div className="flex items-baseline gap-3 mb-1 flex-wrap">
             <h2 className="text-sm font-semibold">The business</h2>
             {data.quality.score !== null && (
@@ -165,11 +271,6 @@ export default async function SymbolPage({ params }: Props) {
                 <span className="font-normal" style={{ color: 'var(--text-faint)' }}>
                   /100
                 </span>
-              </span>
-            )}
-            {data.fundamentals?.nextEarnings && (
-              <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                Next earnings {data.fundamentals.nextEarnings}
               </span>
             )}
           </div>
@@ -227,11 +328,16 @@ export default async function SymbolPage({ params }: Props) {
         </div>
       )}
 
-      <Screen data={data} />
-
       <p className="mt-8 text-xs" style={{ color: 'var(--text-faint)' }}>
-        <Link href="/" className="underline underline-offset-2">
-          Screen another symbol
+        {data.puts.length} put contracts · delayed quotes via {data.provider} · fetched{' '}
+        {new Date(data.fetchedAt).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZone: 'America/New_York',
+        })}{' '}
+        ET ·{' '}
+        <Link href="/screener" className="underline underline-offset-2">
+          Back to screener
         </Link>
       </p>
     </div>
